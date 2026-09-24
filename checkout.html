@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="es-UY">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finalizar pedido — Strato</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="images/favicon.svg">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container site-header__inner">
+    <a href="index.html" class="logo">
+      <span class="layers-mark"><span></span><span></span><span></span></span>
+      <span>Strato<small>Objetos impresos en 3D</small></span>
+    </a>
+    <nav class="main-nav">
+      <ul>
+        <li><a href="index.html">Inicio</a></li>
+        <li><a href="catalogo.html">Catálogo</a></li>
+        <li><a href="nosotros.html">Nosotros</a></li>
+        <li><a href="contacto.html">Contacto</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <button class="icon-btn" id="cartToggle" aria-label="Ver carrito">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 8h12l-1 12H7L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
+        <span class="cart-count">0</span>
+      </button>
+      <button class="nav-toggle" aria-label="Abrir menú">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="page-banner">
+    <div class="container">
+      <span class="eyebrow">Pedido</span>
+      <h1>Finalizar pedido</h1>
+      <p class="muted">Completá tus datos. Al confirmar se abre WhatsApp con el detalle del pedido listo para enviarnos — todavía no hay pago online, coordinamos la entrega y la forma de pago por ese medio.</p>
+    </div>
+  </div>
+
+  <section class="section section--tight">
+    <div class="container">
+
+      <div id="checkoutEmpty" style="display:none" class="text-center">
+        <p>Tu carrito está vacío.</p>
+        <a href="catalogo.html" class="btn btn-primary">Ir al catálogo</a>
+      </div>
+
+      <form id="checkoutForm" class="checkout-grid">
+        <div>
+          <h3>Tus datos</h3>
+          <div class="form-grid">
+            <div class="field">
+              <label for="fName">Nombre y apellido</label>
+              <input type="text" id="fName" required>
+            </div>
+            <div class="field">
+              <label for="fPhone">Teléfono</label>
+              <input type="tel" id="fPhone" required>
+            </div>
+            <div class="field full">
+              <label for="fEmail">Email (opcional)</label>
+              <input type="email" id="fEmail">
+            </div>
+            <div class="field">
+              <label for="fDelivery">Entrega</label>
+              <select id="fDelivery">
+                <option value="Retiro en Montevideo">Retiro en Montevideo</option>
+                <option value="Envío">Envío a domicilio</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="fPayment">Forma de pago</label>
+              <select id="fPayment">
+                <option value="A coordinar por WhatsApp">A coordinar por WhatsApp</option>
+                <option value="Transferencia bancaria">Transferencia bancaria</option>
+                <option value="Efectivo al retirar">Efectivo al retirar</option>
+              </select>
+            </div>
+            <div class="field full" id="addressField" style="display:none">
+              <label for="fAddress">Dirección de envío</label>
+              <input type="text" id="fAddress" placeholder="Calle, número, ciudad">
+            </div>
+            <div class="field full">
+              <label for="fNotes">Notas (color, referencia, lo que necesites contarnos)</label>
+              <textarea id="fNotes"></textarea>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary" style="margin-top:1.5rem">Confirmar pedido por WhatsApp</button>
+        </div>
+
+        <aside class="order-summary">
+          <span class="eyebrow">Tu pedido</span>
+          <div id="summaryItems" style="margin:1rem 0"></div>
+          <div class="cart-drawer__row total">
+            <span>Subtotal</span>
+            <span id="summaryTotal">$U 0</span>
+          </div>
+          <p class="muted" style="font-size:0.78rem;margin-top:0.5rem">Envío y productos a cotizar se confirman por WhatsApp antes de coordinar el pago.</p>
+        </aside>
+      </form>
+
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-bottom" style="border-top:none;padding-top:0;">
+      <span>© <span data-year></span> Strato. Hecho en Montevideo, Uruguay.</span>
+    </div>
+  </div>
+</footer>
+
+<div class="cart-drawer__backdrop" id="cartBackdrop"></div>
+<aside class="cart-drawer" id="cartDrawer">
+  <div class="cart-drawer__head">
+    <span class="eyebrow">Tu carrito</span>
+    <button class="icon-btn" id="cartClose" aria-label="Cerrar carrito">✕</button>
+  </div>
+  <div class="cart-drawer__items" id="cartItems"></div>
+  <div class="cart-drawer__foot" id="cartFoot"></div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/products.js"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/cart.js"></script>
+<script src="js/main.js"></script>
+<script>
+  function renderSummary() {
+    const lines = stratoCartDetailed();
+    const empty = document.getElementById("checkoutEmpty");
+    const form = document.getElementById("checkoutForm");
+    if (!lines.length) {
+      empty.style.display = "block";
+      form.style.display = "none";
+      return;
+    }
+    empty.style.display = "none";
+    form.style.display = "grid";
+
+    document.getElementById("summaryItems").innerHTML = lines
+      .map((l) => {
+        const priceText = l.product.price != null
+          ? "$U " + (l.product.price * l.qty).toLocaleString("es-UY")
+          : l.product.priceLabel || "Cotizar";
+        return '<div class="order-summary__item"><span>' + l.qty + '× ' + l.product.name +
+          (l.color ? ' (' + l.color + ')' : '') + '</span><span>' + priceText + '</span></div>';
+      })
+      .join("");
+
+    document.getElementById("summaryTotal").textContent = "$U " + stratoCartSubtotal().toLocaleString("es-UY");
+  }
+
+  document.getElementById("fDelivery").addEventListener("change", (e) => {
+    document.getElementById("addressField").style.display = e.target.value === "Envío" ? "block" : "none";
+  });
+
+  document.getElementById("checkoutForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const lines = stratoCartDetailed();
+    if (!lines.length) return;
+
+    const submitBtn = document.querySelector('#checkoutForm button[type="submit"]');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Enviando..."; }
+
+    const name = document.getElementById("fName").value;
+    const phone = document.getElementById("fPhone").value;
+    const email = document.getElementById("fEmail").value;
+    const delivery = document.getElementById("fDelivery").value;
+    const payment = document.getElementById("fPayment").value;
+    const address = document.getElementById("fAddress").value;
+    const notes = document.getElementById("fNotes").value;
+    const subtotal = stratoCartSubtotal();
+
+    let msg = "Hola! Quiero confirmar este pedido de Strato:\n\n";
+    lines.forEach((l) => {
+      const priceText = l.product.price != null
+        ? "$U " + (l.product.price * l.qty).toLocaleString("es-UY")
+        : l.product.priceLabel || "Cotizar";
+      msg += "• " + l.qty + "x " + l.product.name + (l.color ? " (" + l.color + ")" : "") + " — " + priceText + "\n";
+    });
+    msg += "\nSubtotal: $U " + subtotal.toLocaleString("es-UY");
+    msg += "\n\nNombre: " + name;
+    msg += "\nTeléfono: " + phone;
+    msg += "\nEntrega: " + delivery;
+    if (delivery === "Envío" && address) msg += "\nDirección: " + address;
+    msg += "\nPago: " + payment;
+    if (notes) msg += "\nNotas: " + notes;
+
+    // Best-effort: si Supabase está configurado, guarda el pedido para que
+    // aparezca en el panel admin. Si no, o si falla, el pedido igual llega
+    // por WhatsApp — nunca bloqueamos el checkout por esto.
+    if (typeof stratoInsertPedido === "function") {
+      await stratoInsertPedido({
+        cliente_nombre: name,
+        cliente_telefono: phone,
+        cliente_email: email || null,
+        entrega: delivery,
+        direccion: delivery === "Envío" ? address : null,
+        pago: payment,
+        notas: notes || null,
+        items: lines.map((l) => ({
+          producto_id: l.product.id,
+          nombre: l.product.name,
+          qty: l.qty,
+          color: l.color || null,
+          precio: l.product.price,
+        })),
+        subtotal: subtotal,
+      });
+    }
+
+    window.open(stratoWhatsAppLink(msg), "_blank");
+    stratoClearCart();
+    window.location.href = "gracias.html";
+  });
+
+  document.addEventListener("strato:catalog-ready", renderSummary);
+  // Si el evento ya pasó (script cargado tarde) o Supabase no está configurado,
+  // esto igual pinta el resumen con los datos ya disponibles.
+  renderSummary();
+</script>
+</body>
+</html>

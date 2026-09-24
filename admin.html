@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="es-UY">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Strato | Panel privado</title>
+<link rel="icon" type="image/svg+xml" href="images/favicon.svg">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --accent: #C97744; --accent-light: #E39A6B; --accent-dark: #8F4A24;
+    --bg-dark: #1B1916; --bg-card: #242019; --bg-section: #201D18;
+    --text: #F5F1EA; --text-muted: #948C7C; --border: rgba(201,119,68,0.22);
+    --danger: #E5726B; --ok: #7FB88F;
+    --font-display: 'Fraunces', Georgia, serif;
+    --font-body: 'Jost', 'Helvetica Neue', Arial, sans-serif;
+  }
+  body { font-family: var(--font-body); background: var(--bg-dark); color: var(--text); min-height: 100vh; }
+  a { color: var(--accent); }
+
+  /* ---- LOGIN ---- */
+  #login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .login-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; padding: 40px; width: 100%; max-width: 360px; }
+  .login-logo { font-family: var(--font-display); font-size: 30px; letter-spacing: 0.02em; color: var(--accent); text-align: center; margin-bottom: 4px; }
+  .login-sub { text-align: center; color: var(--text-muted); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 28px; }
+  label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+  input, select, textarea { width: 100%; background: #15130F; border: 1px solid var(--border); color: var(--text); border-radius: 3px; padding: 10px 12px; font-size: 14px; font-family: inherit; margin-bottom: 16px; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  button { font-family: inherit; cursor: pointer; }
+  .btn { background: var(--accent); color: #1B1916; border: none; border-radius: 3px; padding: 11px 20px; font-size: 13px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; width: 100%; transition: background 0.2s; }
+  .btn:hover { background: var(--accent-light); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+  .btn-small { padding: 6px 12px; font-size: 11px; width: auto; }
+  .error-msg { color: var(--danger); font-size: 13px; margin-top: -8px; margin-bottom: 16px; min-height: 16px; }
+  .ok-msg { color: var(--ok); font-size: 13px; margin-bottom: 16px; }
+
+  /* ---- APP ---- */
+  #app { display: none; }
+  header { background: #141210; border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .app-logo { font-family: var(--font-display); font-size: 20px; color: var(--accent); letter-spacing: 0.02em; }
+  .app-logo span { color: var(--text-muted); font-size: 11px; margin-left: 8px; font-family: var(--font-body); text-transform: uppercase; letter-spacing: 0.1em; }
+  header .who { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 14px; }
+
+  nav.tabs { display: flex; gap: 4px; padding: 0 24px; background: var(--bg-section); border-bottom: 1px solid var(--border); overflow-x: auto; }
+  nav.tabs button { background: none; border: none; color: var(--text-muted); padding: 14px 18px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  main { padding: 28px 24px 80px; max-width: 1100px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; padding: 24px; margin-bottom: 24px; }
+  .card h2 { font-family: var(--font-display); font-size: 18px; color: var(--accent); margin-bottom: 18px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 16px; }
+  @media (max-width: 640px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: top; }
+  tfoot td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
+  tr:hover td { background: rgba(201,119,68,0.04); }
+  .table-wrap { overflow-x: auto; }
+  .muted { color: var(--text-muted); }
+  .empty-msg { color: var(--text-muted); text-align: center; padding: 24px; }
+  .badge-pill { display: inline-block; background: rgba(201,119,68,0.15); color: var(--accent); border-radius: 12px; padding: 2px 10px; font-size: 11px; }
+  .thumb { width: 42px; height: 42px; border-radius: 3px; object-fit: cover; background: #15130F; display: block; }
+
+  /* ---- Card colapsable ---- */
+  .collapsible-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; }
+  .collapsible-header h2 { margin-bottom: 0; }
+  .collapsible-header .chevron { color: var(--accent); font-size: 13px; transition: transform 0.2s; }
+  .collapsible-header.open .chevron { transform: rotate(180deg); }
+  .collapsible-body { display: none; margin-top: 18px; }
+  .collapsible-body.open { display: block; }
+
+  /* ---- Administrador de imágenes ---- */
+  .img-manager { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+  .img-thumb { position: relative; width: 84px; height: 84px; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); background: #15130F; }
+  .img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .img-thumb.img-uploading { display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--text-muted); text-align: center; padding: 4px; }
+  .img-remove { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.7); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; line-height: 1; cursor: pointer; }
+  .img-add-tile { width: 84px; height: 84px; border-radius: 4px; border: 1px dashed var(--border); display: flex; align-items: center; justify-content: center; font-size: 28px; color: var(--accent); cursor: pointer; background: #15130F; }
+  .img-add-tile:hover { border-color: var(--accent); }
+
+  .toolbar { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; }
+  .toolbar .search-bar { flex: 1; min-width: 180px; margin-bottom: 0; }
+  .filtro-row { display: flex; gap: 16px; align-items: end; flex-wrap: wrap; }
+  .filtro-row > div { flex: 1; min-width: 140px; }
+  .filtro-row .btn-secondary { margin-bottom: 16px; width: auto; padding-left: 20px; padding-right: 20px; }
+  .dash-total { font-family: var(--font-display); font-size: 26px; margin-bottom: 4px; }
+  .dash-total.positivo { color: var(--ok); }
+  .dash-total.negativo { color: var(--danger); }
+  .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  .stat-box { flex: 1; min-width: 160px; background: var(--bg-section); border: 1px solid var(--border); border-radius: 4px; padding: 16px 18px; }
+  .stat-box .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 6px; }
+
+  .estado-select { padding: 5px 8px; font-size: 11px; margin: 0; border-radius: 3px; }
+  .estado-nuevo { color: var(--accent); }
+  .estado-cancelado { color: var(--danger); }
+  .estado-entregado, .estado-listo { color: var(--ok); }
+  .detalle-row td { background: rgba(0,0,0,0.15); font-size: 12px; }
+  .detalle-row.hidden-row { display: none; }
+  .clickable { cursor: pointer; }
+  .colores-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .color-tag { background: var(--bg-section); border: 1px solid var(--border); border-radius: 12px; padding: 3px 10px 3px 12px; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .color-tag button { background: none; border: none; color: var(--text-muted); font-size: 13px; }
+  .inline-check { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .inline-check input { width: auto; margin: 0; }
+  .inline-check label { margin: 0; text-transform: none; font-size: 13px; color: var(--text); }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">Strato</div>
+    <div class="login-sub">Panel privado</div>
+    <form id="login-form">
+      <label for="login-email">Email</label>
+      <input type="email" id="login-email" autocomplete="username" required>
+      <label for="login-password">Contraseña</label>
+      <input type="password" id="login-password" autocomplete="current-password" required>
+      <div class="error-msg" id="login-error"></div>
+      <button type="submit" class="btn" id="login-btn">Entrar</button>
+    </form>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app">
+  <header>
+    <div class="app-logo">Strato <span>panel privado</span></div>
+    <div class="who">
+      <span id="user-email"></span>
+      <button class="btn-secondary btn-small" id="logout-btn">Salir</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button data-panel="panel-dashboard" class="active">Dashboard</button>
+    <button data-panel="panel-pedidos">Pedidos</button>
+    <button data-panel="panel-productos">Productos</button>
+    <button data-panel="panel-categorias">Categorías</button>
+    <button data-panel="panel-gastos">Gastos</button>
+  </nav>
+
+  <main>
+
+    <!-- ---- DASHBOARD ---- -->
+    <section class="panel active" id="panel-dashboard">
+      <div class="card">
+        <h2>Resumen</h2>
+        <div class="filtro-row">
+          <div><label for="dash-desde">Desde</label><input type="date" id="dash-desde"></div>
+          <div><label for="dash-hasta">Hasta</label><input type="date" id="dash-hasta"></div>
+          <div><button type="button" class="btn-secondary" id="dash-filtrar">Filtrar</button></div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-box">
+            <div class="label">Pedidos en el período</div>
+            <div class="dash-total" id="dash-pedidos-count">0</div>
+          </div>
+          <div class="stat-box">
+            <div class="label">Ingresos (pedidos no cancelados)</div>
+            <div class="dash-total" id="dash-ingresos">$U 0</div>
+          </div>
+          <div class="stat-box">
+            <div class="label">Gastos</div>
+            <div class="dash-total" id="dash-gastos">$U 0</div>
+          </div>
+          <div class="stat-box">
+            <div class="label">Saldo</div>
+            <div class="dash-total" id="dash-saldo">$U 0</div>
+          </div>
+        </div>
+        <p class="muted" style="margin-top:6px;font-size:12px;">Pedidos con estado "Cancelado" no se cuentan como ingreso.</p>
+      </div>
+
+      <div class="card">
+        <h2>Pedidos nuevos sin gestionar</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Fecha</th><th>Cliente</th><th>Items</th><th>Subtotal</th><th></th></tr></thead>
+            <tbody id="dash-nuevos-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="dash-nuevos-empty" style="display:none">No hay pedidos nuevos pendientes.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- PEDIDOS ---- -->
+    <section class="panel" id="panel-pedidos">
+      <div class="card">
+        <div class="toolbar">
+          <div class="search-bar"><input type="text" id="pedidos-buscar" placeholder="Buscar por nombre, teléfono o email..."></div>
+          <select id="pedidos-filtro-estado" style="width:auto;margin-bottom:0;">
+            <option value="todos">Todos los estados</option>
+            <option value="nuevo">Nuevo</option>
+            <option value="confirmado">Confirmado</option>
+            <option value="en_produccion">En producción</option>
+            <option value="listo">Listo</option>
+            <option value="entregado">Entregado</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Fecha</th><th>Cliente</th><th>Items</th><th>Subtotal</th><th>Entrega</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="pedidos-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="pedidos-empty" style="display:none">No hay pedidos que coincidan.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- PRODUCTOS ---- -->
+    <section class="panel" id="panel-productos">
+      <div class="card">
+        <div class="collapsible-header" id="producto-form-toggle">
+          <h2 id="producto-form-title">Nuevo producto</h2>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="collapsible-body" id="producto-form-body">
+          <form id="form-producto">
+            <div class="grid2">
+              <div>
+                <label for="prod-nombre">Nombre</label>
+                <input type="text" id="prod-nombre" required>
+              </div>
+              <div>
+                <label for="prod-categoria">Categoría</label>
+                <select id="prod-categoria" required></select>
+              </div>
+            </div>
+            <div class="grid2">
+              <div>
+                <label for="prod-precio">Precio ($U)</label>
+                <input type="number" id="prod-precio" min="0" step="1">
+              </div>
+              <div>
+                <label for="prod-material">Material</label>
+                <input type="text" id="prod-material" placeholder="PLA, PLA multicolor, PLA reciclado...">
+              </div>
+            </div>
+            <div class="inline-check">
+              <input type="checkbox" id="prod-cotizar">
+              <label for="prod-cotizar">Sin precio fijo (se cotiza por WhatsApp)</label>
+            </div>
+
+            <label for="prod-color-input">Colores disponibles</label>
+            <div class="colores-tags" id="prod-colores-tags"></div>
+            <input type="text" id="prod-color-input" placeholder="Escribí un color y presioná Enter">
+
+            <label for="prod-descripcion">Descripción</label>
+            <textarea id="prod-descripcion" rows="3"></textarea>
+
+            <div class="grid2">
+              <div>
+                <label for="prod-tag">Etiqueta</label>
+                <select id="prod-tag">
+                  <option value="">Ninguna</option>
+                  <option value="Destacado">Destacado</option>
+                  <option value="Nuevo">Nuevo</option>
+                </select>
+              </div>
+              <div>
+                <label for="prod-orden">Orden (menor = aparece primero)</label>
+                <input type="number" id="prod-orden" value="0">
+              </div>
+            </div>
+
+            <div class="inline-check">
+              <input type="checkbox" id="prod-activo" checked>
+              <label for="prod-activo">Visible en el catálogo público</label>
+            </div>
+
+            <label>Fotos</label>
+            <div class="img-manager" id="prod-img-manager"></div>
+            <input type="file" id="prod-img-input" accept="image/*" multiple style="display:none">
+
+            <div class="grid2" style="margin-top:8px;">
+              <button type="submit" class="btn" id="prod-submit-btn">Guardar producto</button>
+              <button type="button" class="btn-secondary" id="prod-cancel-btn" style="display:none">Cancelar edición</button>
+            </div>
+            <div class="error-msg" id="producto-error"></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Catálogo</h2>
+        <div class="toolbar">
+          <div class="search-bar"><input type="text" id="productos-buscar" placeholder="Buscar producto..."></div>
+          <select id="productos-filtro-categoria" style="width:auto;margin-bottom:0;">
+            <option value="todas">Todas las categorías</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Nombre</th><th>Categoría</th><th>Precio</th><th>Etiqueta</th><th>Visible</th><th></th></tr></thead>
+            <tbody id="productos-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="productos-empty" style="display:none">No hay productos todavía.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- CATEGORIAS ---- -->
+    <section class="panel" id="panel-categorias">
+      <div class="card">
+        <h2>Nueva categoría</h2>
+        <form id="form-categoria">
+          <div class="grid3">
+            <div>
+              <label for="cat-slug">Slug (sin espacios)</label>
+              <input type="text" id="cat-slug" placeholder="iluminacion" required>
+            </div>
+            <div>
+              <label for="cat-nombre">Nombre</label>
+              <input type="text" id="cat-nombre" placeholder="Iluminación" required>
+            </div>
+            <div>
+              <label for="cat-orden">Orden</label>
+              <input type="number" id="cat-orden" value="0">
+            </div>
+          </div>
+          <label for="cat-descripcion">Descripción corta</label>
+          <input type="text" id="cat-descripcion" placeholder="Lámparas y veladores">
+          <div class="grid2">
+            <button type="submit" class="btn" id="cat-submit-btn">Guardar categoría</button>
+            <button type="button" class="btn-secondary" id="cat-cancel-btn" style="display:none">Cancelar edición</button>
+          </div>
+          <div class="error-msg" id="categoria-error"></div>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Categorías</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Orden</th><th>Nombre</th><th>Slug</th><th>Descripción</th><th></th></tr></thead>
+            <tbody id="categorias-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="categorias-empty" style="display:none">No hay categorías todavía.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- GASTOS ---- -->
+    <section class="panel" id="panel-gastos">
+      <div class="card">
+        <h2>Registrar gasto</h2>
+        <form id="form-gasto">
+          <div class="grid2">
+            <div>
+              <label for="gasto-concepto">Concepto</label>
+              <input type="text" id="gasto-concepto" placeholder="Rollo de PLA 1kg" required>
+            </div>
+            <div>
+              <label for="gasto-monto">Monto ($U)</label>
+              <input type="number" id="gasto-monto" min="0" step="1" required>
+            </div>
+          </div>
+          <div class="grid2">
+            <div>
+              <label for="gasto-categoria">Categoría</label>
+              <select id="gasto-categoria">
+                <option value="Filamento">Filamento</option>
+                <option value="Electricidad">Electricidad</option>
+                <option value="Envíos">Envíos</option>
+                <option value="Herramientas">Herramientas / repuestos</option>
+                <option value="Marketing">Marketing</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </div>
+            <div>
+              <label for="gasto-fecha">Fecha</label>
+              <input type="date" id="gasto-fecha" required>
+            </div>
+          </div>
+          <label for="gasto-nota">Nota</label>
+          <input type="text" id="gasto-nota">
+          <button type="submit" class="btn">Registrar gasto</button>
+          <div class="error-msg" id="gasto-error"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Gastos registrados</h2>
+        <div class="filtro-row">
+          <div><label for="gastos-desde">Desde</label><input type="date" id="gastos-desde"></div>
+          <div><label for="gastos-hasta">Hasta</label><input type="date" id="gastos-hasta"></div>
+          <div><button type="button" class="btn-secondary" id="gastos-filtrar">Filtrar</button></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Monto</th><th>Nota</th><th></th></tr></thead>
+            <tbody id="gastos-tbody"></tbody>
+            <tfoot id="gastos-tfoot"></tfoot>
+          </table>
+          <p class="empty-msg" id="gastos-empty" style="display:none">No hay gastos en este período.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/products.js"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>
