@@ -21,6 +21,9 @@
   let productosCache = [];
   let pedidosCache = [];
   let gastosCache = [];
+  let maquinasCache = [];
+  let cotizacionesCache = [];
+  let editingMaquinaId = null;
 
   let editingProductId = null;
   let editingCategoriaId = null;
@@ -45,6 +48,10 @@
     const d = document.createElement("div");
     d.textContent = s ?? "";
     return d.innerHTML;
+  }
+  function numVal(id) {
+    const v = Number(document.getElementById(id).value);
+    return isNaN(v) ? 0 : v;
   }
 
   function requireSb() {
@@ -87,12 +94,16 @@
     document.getElementById("app").style.display = "block";
     document.getElementById("user-email").textContent = user.email;
 
-    await Promise.all([loadCategorias(), loadProductos(), loadPedidos()]);
+    await Promise.all([loadCategorias(), loadProductos(), loadPedidos(), loadMaquinas(), loadCotizaciones()]);
     fillCategoriaSelects();
     renderDashboard();
     renderPedidos();
     renderProductos();
     renderCategorias();
+    renderMaquinas();
+    fillMaquinaSelect();
+    renderCotizaciones();
+    renderResultados();
 
     const hoy = todayStr();
     document.getElementById("gastos-desde").value = monthStartStr();
@@ -714,6 +725,320 @@
     await loadGastos(document.getElementById("gastos-desde").value, document.getElementById("gastos-hasta").value);
     renderGastos();
     renderDashboard();
+  });
+
+  /* ============ CALCULADORA DE COSTOS ============ */
+  /*
+   Fórmula (verificada contra una calculadora de referencia del rubro):
+     horas_uso        = horas_impresion + minutos_adicionales/60
+     costo_material    = (peso_gr/1000) * precio_filamento_kg
+     costo_electricidad = (potencia_w * horas_uso / 1000) * costo_kwh
+     desgaste_maquina  = (costo_reposicion / vida_util_horas) * horas_uso
+     margen_error_monto = margen_error_pct * (material + electricidad + desgaste + acabados)
+     costo_base        = material + electricidad + desgaste + acabados + margen_error_monto
+     total_a_cobrar     = costo_base * margen_ganancia + accesorio_adicional
+     ganancia_neta      = total_a_cobrar - costo_base
+   El "accesorio adicional" NO entra en costo_base ni en el margen de error:
+   se suma al final, sin llevar margen de ganancia (es guita que sale del
+   bolsillo tal cual, ej. un herraje comprado para esa pieza puntual).
+  */
+  function calcularCosto() {
+    const potenciaW = numVal("calc-potencia");
+    const vidaUtilHoras = Math.max(numVal("calc-vida-util"), 1);
+    const costoReposicion = numVal("calc-costo-reposicion");
+    const precioFilamento = numVal("calc-precio-filamento");
+    const costoElectricidadKwh = numVal("calc-costo-electricidad");
+    const horasImpresion = numVal("calc-horas");
+    const minutosAdicionales = numVal("calc-minutos");
+    const pesoGr = numVal("calc-peso");
+    const margenErrorPct = numVal("calc-margen-error") / 100;
+    const margenGanancia = numVal("calc-margen-ganancia");
+    const accesorio = numVal("calc-accesorio");
+    const acabados = numVal("calc-acabados");
+
+    const horasUso = horasImpresion + minutosAdicionales / 60;
+    const costoMaterial = (pesoGr / 1000) * precioFilamento;
+    const costoElectricidad = ((potenciaW * horasUso) / 1000) * costoElectricidadKwh;
+    const desgasteMaquina = (costoReposicion / vidaUtilHoras) * horasUso;
+    const margenErrorMonto = margenErrorPct * (costoMaterial + costoElectricidad + desgasteMaquina + acabados);
+    const costoBase = costoMaterial + costoElectricidad + desgasteMaquina + acabados + margenErrorMonto;
+    const totalACobrar = costoBase * margenGanancia + accesorio;
+    const gananciaNeta = totalACobrar - costoBase;
+    const gananciaPct = totalACobrar > 0 ? (gananciaNeta / totalACobrar) * 100 : 0;
+
+    return {
+      potenciaW, vidaUtilHoras, costoReposicion, precioFilamento, costoElectricidadKwh,
+      horasImpresion, minutosAdicionales, pesoGr, margenErrorPct, margenGanancia, accesorio, acabados,
+      horasUso, costoMaterial, costoElectricidad, desgasteMaquina, margenErrorMonto,
+      costoBase, totalACobrar, gananciaNeta, gananciaPct,
+    };
+  }
+
+  function calcLinea(label, sub, monto, prefix) {
+    return (
+      '<div class="calc-line"><div><div>' + label + "</div>" +
+      (sub ? '<div class="sub">' + sub + "</div>" : "") +
+      "</div><div>" + (prefix || "") + fmtMoney(monto) + "</div></div>"
+    );
+  }
+
+  function renderResultados() {
+    const r = calcularCosto();
+    document.getElementById("calc-horas-uso").textContent = "(" + r.horasUso.toFixed(2) + " h de uso)";
+
+    let html = "";
+    html += calcLinea("Costo material", r.pesoGr + " gr · " + fmtMoney(r.precioFilamento) + "/kg", r.costoMaterial);
+    html += calcLinea("Costo electricidad", r.potenciaW + " W · " + fmtMoney(r.costoElectricidadKwh) + "/kWh", r.costoElectricidad);
+    html += calcLinea("Desgaste máquina", "Amortización por " + r.vidaUtilHoras + " h", r.desgasteMaquina);
+    html += calcLinea("Margen de error", "+" + Math.round(r.margenErrorPct * 100) + "% sobre costos", r.margenErrorMonto, "+");
+    if (r.acabados) html += calcLinea("Insumos extra / acabado", null, r.acabados, "+");
+    if (r.accesorio) html += calcLinea("Accesorio adicional", "no lleva margen de ganancia", r.accesorio, "+");
+    html += '<div class="calc-line-total"><div>Costo base</div><div>' + fmtMoney(r.costoBase) + "</div></div>";
+    html +=
+      '<div class="calc-line-final"><div>Total a cobrar <span class="tag">margen ' +
+      r.margenGanancia + "x</span></div><div>" + fmtMoney(r.totalACobrar) + "</div></div>";
+    html +=
+      '<div class="muted" style="font-size:12px;margin-top:4px;">Ganancia neta estimada: +' +
+      fmtMoney(r.gananciaNeta) + " · " + r.gananciaPct.toFixed(1) + "%</div>";
+
+    document.getElementById("calc-resultados").innerHTML = html;
+    return r;
+  }
+
+  document
+    .querySelectorAll(
+      "#calc-potencia, #calc-vida-util, #calc-costo-reposicion, #calc-precio-filamento, #calc-costo-electricidad, " +
+        "#calc-horas, #calc-minutos, #calc-peso, #calc-margen-ganancia, #calc-accesorio, #calc-acabados"
+    )
+    .forEach((el) => el.addEventListener("input", renderResultados));
+
+  document.getElementById("calc-margen-error").addEventListener("input", (e) => {
+    document.getElementById("calc-margen-error-label").textContent = e.target.value + "%";
+    renderResultados();
+  });
+
+  /* ---- Selector de máquina ---- */
+  function fillMaquinaSelect() {
+    const sel = document.getElementById("calc-maquina");
+    const activas = maquinasCache.filter((m) => m.activa);
+    sel.innerHTML =
+      '<option value="">— Elegí una máquina o cargá los datos a mano —</option>' +
+      activas.map((m) => '<option value="' + m.id + '">' + escHtml(m.nombre) + " (" + m.potencia_w + " W)</option>").join("");
+  }
+
+  document.getElementById("calc-maquina").addEventListener("change", (e) => {
+    const m = maquinasCache.find((x) => x.id === e.target.value);
+    if (m) {
+      document.getElementById("calc-potencia").value = m.potencia_w;
+      document.getElementById("calc-vida-util").value = m.vida_util_horas;
+      document.getElementById("calc-costo-reposicion").value = m.costo_reposicion;
+    }
+    renderResultados();
+  });
+
+  /* ---- Limpiar ---- */
+  document.getElementById("calc-limpiar-btn").addEventListener("click", () => {
+    document.getElementById("calc-maquina").value = "";
+    document.getElementById("calc-potencia").value = 200;
+    document.getElementById("calc-vida-util").value = 5000;
+    document.getElementById("calc-costo-reposicion").value = 0;
+    document.getElementById("calc-precio-filamento").value = 0;
+    document.getElementById("calc-costo-electricidad").value = 0;
+    document.getElementById("calc-nombre-pieza").value = "";
+    document.getElementById("calc-cliente").value = "";
+    document.getElementById("calc-horas").value = 0;
+    document.getElementById("calc-minutos").value = 30;
+    document.getElementById("calc-peso").value = 50;
+    document.getElementById("calc-material").value = "PLA";
+    document.getElementById("calc-margen-error").value = 35;
+    document.getElementById("calc-margen-error-label").textContent = "35%";
+    document.getElementById("calc-margen-ganancia").value = 2;
+    document.getElementById("calc-accesorio").value = 0;
+    document.getElementById("calc-acabados").value = 0;
+    document.getElementById("calc-altura-capa").value = "0.20";
+    document.getElementById("calc-relleno").value = 20;
+    document.getElementById("calc-error").textContent = "";
+    renderResultados();
+  });
+
+  /* ---- Guardar cotización ---- */
+  document.getElementById("calc-guardar-btn").addEventListener("click", async () => {
+    const errEl = document.getElementById("calc-error");
+    errEl.textContent = "";
+    const nombrePieza = document.getElementById("calc-nombre-pieza").value.trim();
+    if (!nombrePieza) { errEl.textContent = "Poné un nombre para la pieza antes de guardar."; return; }
+    if (!requireSb()) return;
+
+    const r = calcularCosto();
+    const maquinaSel = document.getElementById("calc-maquina");
+    const maquinaNombre = maquinaSel.value ? maquinaSel.options[maquinaSel.selectedIndex].text : "Manual (sin máquina guardada)";
+
+    const payload = {
+      nombre_pieza: nombrePieza,
+      cliente: document.getElementById("calc-cliente").value.trim() || null,
+      maquina_nombre: maquinaNombre,
+      material_nombre: document.getElementById("calc-material").value,
+      inputs: {
+        potencia_w: r.potenciaW,
+        vida_util_horas: r.vidaUtilHoras,
+        costo_reposicion: r.costoReposicion,
+        precio_filamento_kg: r.precioFilamento,
+        costo_electricidad_kwh: r.costoElectricidadKwh,
+        horas_impresion: r.horasImpresion,
+        minutos_adicionales: r.minutosAdicionales,
+        peso_gr: r.pesoGr,
+        margen_error_pct: r.margenErrorPct,
+        margen_ganancia: r.margenGanancia,
+        costo_accesorio: r.accesorio,
+        costo_acabados: r.acabados,
+        altura_capa: document.getElementById("calc-altura-capa").value,
+        relleno_pct: numVal("calc-relleno"),
+      },
+      resultados: {
+        horas_uso: r.horasUso,
+        costo_material: r.costoMaterial,
+        costo_electricidad: r.costoElectricidad,
+        desgaste_maquina: r.desgasteMaquina,
+        margen_error_monto: r.margenErrorMonto,
+        costo_base: r.costoBase,
+        ganancia_neta: r.gananciaNeta,
+        ganancia_pct: r.gananciaPct,
+      },
+      total_a_cobrar: r.totalACobrar,
+    };
+
+    const { error } = await stratoSb.from("cotizaciones").insert([payload]);
+    if (error) { errEl.textContent = error.message; return; }
+
+    await loadCotizaciones();
+    renderCotizaciones();
+  });
+
+  function renderCotizaciones() {
+    const tbody = document.getElementById("cotizaciones-tbody");
+    document.getElementById("cotizaciones-empty").style.display = cotizacionesCache.length ? "none" : "block";
+    tbody.innerHTML = cotizacionesCache
+      .map((c) => {
+        const gp = c.resultados && c.resultados.ganancia_pct != null ? c.resultados.ganancia_pct.toFixed(1) + "%" : "—";
+        return (
+          "<tr><td>" + fmtFecha(c.created_at) + "</td><td>" + escHtml(c.nombre_pieza) + "</td><td>" +
+          escHtml(c.cliente || "—") + "</td><td>" + escHtml(c.maquina_nombre || "—") + "</td><td>" +
+          fmtMoney(c.total_a_cobrar) + "</td><td>" + gp +
+          "</td><td><button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarCotizacion('" +
+          c.id + "')\">Eliminar</button></td></tr>"
+        );
+      })
+      .join("");
+  }
+
+  window.stratoAdminEliminarCotizacion = async function (id) {
+    if (!confirm("¿Eliminar esta cotización del historial?")) return;
+    const { error } = await stratoSb.from("cotizaciones").delete().eq("id", id);
+    if (error) { alert("No se pudo eliminar: " + error.message); return; }
+    cotizacionesCache = cotizacionesCache.filter((c) => c.id !== id);
+    renderCotizaciones();
+  };
+
+  /* ---- Mis máquinas (CRUD) ---- */
+  async function loadMaquinas() {
+    const { data, error } = await stratoSb.from("maquinas_3d").select("*").order("orden", { ascending: true });
+    if (!error) maquinasCache = data || [];
+  }
+
+  async function loadCotizaciones() {
+    const { data, error } = await stratoSb
+      .from("cotizaciones")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (!error) cotizacionesCache = data || [];
+  }
+
+  function renderMaquinas() {
+    const tbody = document.getElementById("maquinas-tbody");
+    document.getElementById("maquinas-empty").style.display = maquinasCache.length ? "none" : "block";
+    tbody.innerHTML = maquinasCache
+      .map(
+        (m) =>
+          "<tr><td>" + escHtml(m.nombre) + (m.marca ? "<br><span class='muted'>" + escHtml(m.marca) + "</span>" : "") +
+          "</td><td>" + m.potencia_w + " W</td><td>" + m.vida_util_horas + " h</td><td>" + fmtMoney(m.costo_reposicion) +
+          "</td><td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarMaquina('" +
+          m.id + "')\">Editar</button> <button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarMaquina('" +
+          m.id + "')\">Eliminar</button></td></tr>"
+      )
+      .join("");
+  }
+
+  window.stratoAdminEditarMaquina = function (id) {
+    const m = maquinasCache.find((x) => x.id === id);
+    if (!m) return;
+    editingMaquinaId = id;
+    document.getElementById("maq-nombre").value = m.nombre;
+    document.getElementById("maq-marca").value = m.marca || "";
+    document.getElementById("maq-potencia").value = m.potencia_w;
+    document.getElementById("maq-vida-util").value = m.vida_util_horas;
+    document.getElementById("maq-costo-reposicion").value = m.costo_reposicion;
+    document.getElementById("maquina-form-title").textContent = "Editar máquina";
+    document.getElementById("maq-submit-btn").textContent = "Guardar cambios";
+    document.getElementById("maq-cancel-btn").style.display = "inline-block";
+    if (!document.getElementById("maquina-form-body").classList.contains("open")) {
+      document.getElementById("maquina-form-toggle").click();
+    }
+    document.getElementById("panel-calculadora").scrollIntoView({ behavior: "smooth" });
+  };
+
+  window.stratoAdminEliminarMaquina = async function (id) {
+    if (!confirm("¿Eliminar esta máquina?")) return;
+    const { error } = await stratoSb.from("maquinas_3d").delete().eq("id", id);
+    if (error) { alert("No se pudo eliminar: " + error.message); return; }
+    await loadMaquinas();
+    renderMaquinas();
+    fillMaquinaSelect();
+  };
+
+  document.getElementById("maquina-form-toggle").addEventListener("click", () => {
+    document.getElementById("maquina-form-toggle").classList.toggle("open");
+    document.getElementById("maquina-form-body").classList.toggle("open");
+  });
+
+  document.getElementById("maq-cancel-btn").addEventListener("click", resetMaquinaForm);
+
+  function resetMaquinaForm() {
+    editingMaquinaId = null;
+    document.getElementById("form-maquina").reset();
+    document.getElementById("maq-potencia").value = 200;
+    document.getElementById("maq-vida-util").value = 5000;
+    document.getElementById("maq-costo-reposicion").value = 0;
+    document.getElementById("maquina-form-title").textContent = "Nueva máquina";
+    document.getElementById("maq-submit-btn").textContent = "Guardar máquina";
+    document.getElementById("maq-cancel-btn").style.display = "none";
+  }
+
+  document.getElementById("form-maquina").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById("maquina-error");
+    errEl.textContent = "";
+    const payload = {
+      nombre: document.getElementById("maq-nombre").value.trim(),
+      marca: document.getElementById("maq-marca").value.trim(),
+      potencia_w: numVal("maq-potencia"),
+      vida_util_horas: numVal("maq-vida-util"),
+      costo_reposicion: numVal("maq-costo-reposicion"),
+    };
+    if (!payload.nombre) { errEl.textContent = "Falta el nombre."; return; }
+
+    let error;
+    if (editingMaquinaId) {
+      ({ error } = await stratoSb.from("maquinas_3d").update(payload).eq("id", editingMaquinaId));
+    } else {
+      ({ error } = await stratoSb.from("maquinas_3d").insert([payload]));
+    }
+    if (error) { errEl.textContent = error.message; return; }
+
+    await loadMaquinas();
+    renderMaquinas();
+    fillMaquinaSelect();
+    resetMaquinaForm();
   });
 
   /* ============ INIT ============ */
