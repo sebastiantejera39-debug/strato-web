@@ -112,6 +112,16 @@
   .inline-check { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
   .inline-check input { width: auto; margin: 0; }
   .inline-check label { margin: 0; text-transform: none; font-size: 13px; color: var(--text); }
+
+  /* ---- Calculadora de costos ---- */
+  input[type="range"] { padding: 0; background: none; border: none; margin-bottom: 6px; accent-color: var(--accent); }
+  .calc-box { background: var(--bg-section); border: 1px solid var(--border); border-radius: 4px; padding: 18px 20px; margin-bottom: 16px; }
+  .calc-line { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .calc-line .sub { color: var(--text-muted); font-size: 11px; }
+  .calc-line-total { display: flex; justify-content: space-between; padding-top: 12px; font-weight: 700; }
+  .calc-line-final { display: flex; justify-content: space-between; align-items: baseline; padding-top: 10px; font-family: var(--font-display); font-size: 20px; color: var(--accent); }
+  .calc-line-final .tag { font-size: 11px; font-family: var(--font-body); color: var(--text-muted); }
+  .calc-margen-label { display: flex; justify-content: space-between; }
 </style>
 </head>
 <body>
@@ -148,6 +158,7 @@
     <button data-panel="panel-productos">Productos</button>
     <button data-panel="panel-categorias">Categorías</button>
     <button data-panel="panel-gastos">Gastos</button>
+    <button data-panel="panel-calculadora">Calculadora</button>
   </nav>
 
   <main>
@@ -404,6 +415,188 @@
             <tfoot id="gastos-tfoot"></tfoot>
           </table>
           <p class="empty-msg" id="gastos-empty" style="display:none">No hay gastos en este período.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- CALCULADORA DE COSTOS ---- -->
+    <section class="panel" id="panel-calculadora">
+      <div class="card">
+        <div class="collapsible-header" id="maquina-form-toggle">
+          <h2 id="maquina-form-title">Nueva máquina</h2>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="collapsible-body" id="maquina-form-body">
+          <form id="form-maquina">
+            <div class="grid2">
+              <div>
+                <label for="maq-nombre">Nombre</label>
+                <input type="text" id="maq-nombre" placeholder="Ej: Bambu Lab A1 mini" required>
+              </div>
+              <div>
+                <label for="maq-marca">Marca (opcional)</label>
+                <input type="text" id="maq-marca" placeholder="Bambu Lab">
+              </div>
+            </div>
+            <div class="grid3">
+              <div>
+                <label for="maq-potencia">Potencia activa (W)</label>
+                <input type="number" id="maq-potencia" min="0" step="1" value="200" required>
+              </div>
+              <div>
+                <label for="maq-vida-util">Vida útil (horas)</label>
+                <input type="number" id="maq-vida-util" min="1" step="1" value="5000" required>
+              </div>
+              <div>
+                <label for="maq-costo-reposicion">Costo de reposición ($U)</label>
+                <input type="number" id="maq-costo-reposicion" min="0" step="1" value="0" required>
+              </div>
+            </div>
+            <div class="grid2" style="margin-top:8px;">
+              <button type="submit" class="btn" id="maq-submit-btn">Guardar máquina</button>
+              <button type="button" class="btn-secondary" id="maq-cancel-btn" style="display:none">Cancelar edición</button>
+            </div>
+            <div class="error-msg" id="maquina-error"></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Mis máquinas</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nombre</th><th>Potencia</th><th>Vida útil</th><th>Costo reposición</th><th></th></tr></thead>
+            <tbody id="maquinas-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="maquinas-empty" style="display:none">Todavía no cargaste ninguna máquina.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Calculadora de costos</h2>
+
+        <label for="calc-maquina">Máquina</label>
+        <select id="calc-maquina"></select>
+
+        <div class="grid3">
+          <div>
+            <label for="calc-potencia">Potencia activa (W)</label>
+            <input type="number" id="calc-potencia" min="0" step="1" value="200">
+          </div>
+          <div>
+            <label for="calc-vida-util">Vida útil (horas)</label>
+            <input type="number" id="calc-vida-util" min="1" step="1" value="5000">
+          </div>
+          <div>
+            <label for="calc-costo-reposicion">Costo reposición ($U)</label>
+            <input type="number" id="calc-costo-reposicion" min="0" step="1" value="0">
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label for="calc-precio-filamento">Precio del filamento ($U / kg)</label>
+            <input type="number" id="calc-precio-filamento" min="0" step="1" value="0">
+          </div>
+          <div>
+            <label for="calc-costo-electricidad">Costo de electricidad ($U / kWh)</label>
+            <input type="number" id="calc-costo-electricidad" min="0" step="0.1" value="0">
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label for="calc-nombre-pieza">Nombre de la pieza / proyecto</label>
+            <input type="text" id="calc-nombre-pieza" placeholder="Ej: Maceta Terraza">
+          </div>
+          <div>
+            <label for="calc-cliente">Cliente (opcional)</label>
+            <input type="text" id="calc-cliente" placeholder="Particular / Empresa">
+          </div>
+        </div>
+
+        <div class="grid3">
+          <div>
+            <label for="calc-horas">Horas de impresión</label>
+            <input type="number" id="calc-horas" min="0" step="1" value="0">
+          </div>
+          <div>
+            <label for="calc-minutos">Minutos adicionales</label>
+            <input type="number" id="calc-minutos" min="0" max="59" step="1" value="30">
+          </div>
+          <div>
+            <label for="calc-peso">Peso de la pieza (gr)</label>
+            <input type="number" id="calc-peso" min="0" step="1" value="50">
+          </div>
+        </div>
+
+        <label for="calc-material">Material</label>
+        <select id="calc-material">
+          <option>PLA</option>
+          <option>PLA Silk</option>
+          <option>PLA+</option>
+          <option>PETG</option>
+          <option>ABS</option>
+          <option>TPU</option>
+          <option>Nylon</option>
+          <option>Otro</option>
+        </select>
+
+        <label class="calc-margen-label">Margen de error (fallas / desperdicio) <span id="calc-margen-error-label">35%</span></label>
+        <input type="range" id="calc-margen-error" min="0" max="60" step="1" value="35">
+
+        <div class="grid3">
+          <div>
+            <label for="calc-margen-ganancia">Margen de ganancia (multiplicador)</label>
+            <input type="number" id="calc-margen-ganancia" min="0" step="0.1" value="2">
+          </div>
+          <div>
+            <label for="calc-accesorio">Costo accesorio adicional ($U)</label>
+            <input type="number" id="calc-accesorio" min="0" step="1" value="0">
+          </div>
+          <div>
+            <label for="calc-acabados">Insumos extra / acabado ($U)</label>
+            <input type="number" id="calc-acabados" min="0" step="1" value="0">
+          </div>
+        </div>
+        <p class="muted" style="margin-top:-10px;font-size:12px;">El accesorio adicional se suma al total sin aplicar margen de ganancia. Los insumos/acabado sí forman parte del costo base.</p>
+
+        <div class="grid2">
+          <div>
+            <label for="calc-altura-capa">Altura de capa (referencia)</label>
+            <select id="calc-altura-capa">
+              <option value="0.12">0.12 mm (calidad alta)</option>
+              <option value="0.16">0.16 mm</option>
+              <option value="0.20" selected>0.20 mm (estándar)</option>
+              <option value="0.28">0.28 mm (rápida)</option>
+            </select>
+          </div>
+          <div>
+            <label for="calc-relleno">Relleno / infill (referencia, %)</label>
+            <input type="number" id="calc-relleno" min="0" max="100" step="5" value="20">
+          </div>
+        </div>
+
+        <div class="calc-box">
+          <h2 style="font-size:15px;margin-bottom:10px;">Resultados <span class="muted" style="font-size:12px;font-weight:400;" id="calc-horas-uso"></span></h2>
+          <div id="calc-resultados"></div>
+        </div>
+
+        <div class="grid2">
+          <button type="button" class="btn-secondary" id="calc-limpiar-btn">Limpiar</button>
+          <button type="button" class="btn" id="calc-guardar-btn">Guardar cotización</button>
+        </div>
+        <div class="error-msg" id="calc-error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Historial de cotizaciones</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Fecha</th><th>Pieza</th><th>Cliente</th><th>Máquina</th><th>Total</th><th>Ganancia</th><th></th></tr></thead>
+            <tbody id="cotizaciones-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="cotizaciones-empty" style="display:none">Todavía no guardaste ninguna cotización.</p>
         </div>
       </div>
     </section>
