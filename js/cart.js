@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STORGE LAB — carrito de compras
+   STRATO — carrito de compras
    Persiste en localStorage. No depende de backend: pensado para arrancar
    ya mismo con checkout por WhatsApp, y poder sumar Mercado Pago más
    adelante (como hizo RGOL.UY) sin tener que rehacer esta parte.
@@ -7,7 +7,7 @@
 
 /* ---- Configuración: reemplazar con los datos reales del negocio ---- */
 const STRATO_WHATSAPP_NUMBER = "59800000000"; // TODO: número real, formato 598XXXXXXXX
-const STRATO_INSTAGRAM = "storge.lab"; // TODO: usuario real de Instagram (ya confirmado: @storge.lab)
+const STRATO_INSTAGRAM = "strato.uy"; // TODO: usuario real de Instagram
 
 const CART_KEY = "strato_cart_v1";
 

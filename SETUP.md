@@ -1,6 +1,6 @@
 # Puesta en marcha: Supabase + GitHub + Netlify
 
-Guía paso a paso para dejar Storge Lab funcionando con catálogo dinámico, panel
+Guía paso a paso para dejar Strato funcionando con catálogo dinámico, panel
 admin y deploy continuo — el mismo circuito que ya armaste para RGOL.UY.
 Son cuentas y pasos tuyos (login, contraseñas, tokens); yo te dejo todo el
 código listo para que esto sea copiar/pegar y un par de clics.

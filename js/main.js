@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STORGE LAB — comportamiento compartido de la interfaz
+   STRATO — comportamiento compartido de la interfaz
    (menú mobile, año del footer, animación simple al hacer scroll)
    ========================================================================== */
 

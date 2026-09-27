@@ -1,9 +1,7 @@
-# Storge Lab — sitio web + panel admin
+# Strato — sitio web + panel admin
 
 Sitio (HTML/CSS/JS puro, sin build) para el emprendimiento de impresión 3D
-**Storge Lab** (el repo y la carpeta siguen llamándose `strato-web` por
-historia del proyecto, pero la marca visible en el sitio es Storge Lab),
-con catálogo dinámico contra Supabase y un panel privado en
+**Strato**, con catálogo dinámico contra Supabase y un panel privado en
 `/admin.html`. Mismo circuito técnico que RGOL.UY: Supabase (datos + login +
 fotos) → GitHub (repo) → Netlify (deploy continuo).
 
@@ -54,7 +52,7 @@ strato-web/
 ├── supabase/schema.sql          Tablas + políticas de seguridad (RLS)
 ├── supabase/storage_productos.sql  Bucket de imágenes de producto
 ├── supabase/seed.sql            Categorías/productos de arranque
-├── images/favicon.png, logo-storge-wide.png
+├── images/favicon.svg
 ├── netlify.toml, robots.txt, sitemap.xml
 ├── SETUP.md               Guía paso a paso: Supabase + GitHub + Netlify
 ```
@@ -66,9 +64,9 @@ strato-web/
 2. **Número de WhatsApp e Instagram** — en `js/cart.js`, arriba de todo:
    ```js
    const STRATO_WHATSAPP_NUMBER = "59800000000"; // formato 598XXXXXXXX, sin +
-   const STRATO_INSTAGRAM = "storge.lab"; // ya confirmado: @storge.lab
+   const STRATO_INSTAGRAM = "strato.uy";
    ```
-   También hay links de WhatsApp/email hardcodeados en el header y footer de cada página (buscá `wa.me/598` para reemplazar el número real; el Instagram `@storge.lab` ya está actualizado en todas las páginas).
+   También hay links de WhatsApp/Instagram/email hardcodeados en el header y footer de cada página (buscá `wa.me/598` y `instagram.com/strato.uy` para reemplazar todos de una).
 
 3. **Productos, precios y fotos reales** — una vez que Supabase está
    configurado, todo esto se carga desde `/admin.html` (pestaña

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STORGE LAB — render de productos, filtros de catálogo y lightbox de producto
+   STRATO — render de productos, filtros de catálogo y lightbox de producto
    ========================================================================== */
 
 function stratoCategoryName(slug) {

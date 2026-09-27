@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STORGE LAB — datos de catálogo
+   STRATO — datos de catálogo
    Editá este archivo para cargar tus productos reales: nombre, categoría,
    precio, colores disponibles, descripción y fotos.
 
@@ -33,8 +33,8 @@ const STRATO_PRODUCTS = [
     images: [],
   },
   {
-    id: "velador-storge",
-    name: "Velador Storge",
+    id: "velador-strato",
+    name: "Velador Strato",
     category: "iluminacion",
     price: 1450,
     colors: ["Crudo", "Piedra"],
