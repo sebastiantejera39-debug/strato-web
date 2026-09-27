@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /checkout.html
+Disallow: /gracias.html
+
+Sitemap: https://stratouy.netlify.app/sitemap.xml
