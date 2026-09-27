@@ -842,8 +842,8 @@
     document.getElementById("calc-potencia").value = 200;
     document.getElementById("calc-vida-util").value = 5000;
     document.getElementById("calc-costo-reposicion").value = 0;
-    document.getElementById("calc-precio-filamento").value = 0;
-    document.getElementById("calc-costo-electricidad").value = 0;
+    document.getElementById("calc-precio-filamento").value = 700;
+    document.getElementById("calc-costo-electricidad").value = 10;
     document.getElementById("calc-nombre-pieza").value = "";
     document.getElementById("calc-cliente").value = "";
     document.getElementById("calc-horas").value = 0;
