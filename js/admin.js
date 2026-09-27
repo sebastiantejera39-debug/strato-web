@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STRATO — panel privado (/admin.html)
+   STORGE LAB — panel privado (/admin.html)
    Usa el mismo cliente de Supabase que el sitio público (definido en
    js/supabase-client.js), pero acá el login es obligatorio: todas las
    escrituras dependen de las políticas RLS "... admin" del schema.sql, que

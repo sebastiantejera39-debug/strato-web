@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STRATO — cliente de Supabase
+   STORGE LAB — cliente de Supabase
    Mismo enfoque que RGOL: un cliente inicializado acá, con la URL y la
    "anon/publishable key" del proyecto (es pública a propósito — la protección
    real está en las políticas de RLS del lado de la base, no en ocultar esta

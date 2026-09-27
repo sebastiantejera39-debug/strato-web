@@ -1,23 +1,28 @@
 /* ==========================================================================
-   STRATO — hoja de estilos principal
-   Estética: premium minimalista (referencias: Gantri, Drag and Drop)
-   Paleta neutra cálida + acento terracota. Motivo visual: "capas" (Strato = capa, en italiano).
+   STORGE LAB — hoja de estilos principal
+   Estética: premium cálida (referencias: Gantri, Drag and Drop)
+   Paleta de marca: bordó + crema + lila (del logo). El bordó funciona como
+   tinta/superficie oscura (header, footer, botones), la crema como fondo
+   claro, y el lila queda reservado para detalles chicos (líneas, tags,
+   puntitos) — igual que el puntito lila del propio logo — nunca como texto
+   sobre fondo claro, para no perder legibilidad.
    ========================================================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Jost:wght@300;400;500;600&display=swap');
 
 :root {
-  /* Paleta */
-  --color-bg: #F5F1EA;
-  --color-paper: #FBF9F5;
-  --color-charcoal: #211F1B;
-  --color-stone: #837A6D;
-  --color-stone-light: #B5AC9C;
-  --color-line: #E2DACB;
-  --color-accent: #B5602F;
-  --color-accent-dark: #8F4A24;
-  --color-accent-tint: #F1E1D3;
-  --color-cream-alt: #EFE8DA;
+  /* Paleta de marca (Storge Lab) */
+  --color-bg: #FFF4C9;
+  --color-paper: #FFFBEA;
+  --color-charcoal: #350A06;
+  --color-stone: #8C5850;
+  --color-stone-light: #C7A79C;
+  --color-line: #E9D8A0;
+  --color-accent: #DAC7FF;
+  --color-accent-dark: #B79EEF;
+  --color-accent-tint: #F2ECFF;
+  --color-cream-alt: #FFEFB0;
+  --color-crema-muted: #C9AE96;
 
   /* Tipografía */
   --font-display: 'Fraunces', Georgia, serif;
@@ -71,7 +76,7 @@ input, textarea, select { font-family: inherit; }
   font-size: 0.72rem;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--color-accent);
+  color: var(--color-charcoal);
   font-weight: 500;
   display: inline-flex;
   align-items: center;
@@ -130,13 +135,13 @@ input, textarea, select { font-family: inherit; }
   background: var(--color-charcoal);
   color: var(--color-paper);
 }
-.btn-primary:hover { background: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover { opacity: 0.85; }
 .btn-accent {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #fff;
+  color: var(--color-charcoal);
 }
-.btn-accent:hover { background: var(--color-accent-dark); border-color: var(--color-accent-dark); }
+.btn-accent:hover { background: var(--color-charcoal); border-color: var(--color-charcoal); color: var(--color-bg); }
 .btn-ghost {
   border-color: var(--color-line);
   color: var(--color-charcoal);
@@ -151,9 +156,10 @@ input, textarea, select { font-family: inherit; }
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(245, 241, 234, 0.92);
+  background: rgba(53, 10, 6, 0.94);
   backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 1px solid rgba(255, 244, 201, 0.12);
+  color: var(--color-bg);
 }
 .site-header__inner {
   display: flex;
@@ -165,11 +171,9 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  font-family: var(--font-display);
-  font-size: 1.5rem;
-  letter-spacing: 0.02em;
-  color: var(--color-charcoal);
+  color: var(--color-bg);
 }
+.logo img { display: block; height: 34px; width: auto; }
 .logo .layers-mark { color: var(--color-accent); }
 .logo small {
   display: block;
@@ -177,7 +181,7 @@ input, textarea, select { font-family: inherit; }
   font-size: 0.6rem;
   letter-spacing: 0.24em;
   text-transform: uppercase;
-  color: var(--color-stone);
+  color: var(--color-crema-muted);
   font-weight: 400;
   margin-top: 2px;
 }
@@ -191,7 +195,7 @@ input, textarea, select { font-family: inherit; }
   font-size: 0.82rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-charcoal);
+  color: var(--color-bg);
   position: relative;
   padding-bottom: 4px;
 }
@@ -209,7 +213,7 @@ input, textarea, select { font-family: inherit; }
   position: relative;
   background: none;
   border: none;
-  color: var(--color-charcoal);
+  color: var(--color-bg);
   display: inline-flex;
   align-items: center;
   padding: 0.3rem;
@@ -219,7 +223,7 @@ input, textarea, select { font-family: inherit; }
   position: absolute;
   top: -4px; right: -6px;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-charcoal);
   font-size: 0.62rem;
   width: 16px; height: 16px;
   border-radius: 50%;
@@ -237,10 +241,10 @@ input, textarea, select { font-family: inherit; }
     flex-direction: column;
     position: absolute;
     top: 100%; left: 0; right: 0;
-    background: var(--color-paper);
+    background: var(--color-charcoal);
     padding: var(--space-md);
     gap: var(--space-sm);
-    border-bottom: 1px solid var(--color-line);
+    border-bottom: 1px solid rgba(255, 244, 201, 0.12);
   }
 }
 
@@ -261,7 +265,7 @@ input, textarea, select { font-family: inherit; }
   line-height: 1.05;
   margin: var(--space-sm) 0 var(--space-md);
 }
-.hero h1 em { font-style: italic; color: var(--color-accent); }
+.hero h1 em { font-style: italic; background: var(--color-accent); padding: 0 0.15em; border-radius: 2px; }
 .hero p.lead { font-size: 1.05rem; max-width: 46ch; }
 .hero__actions { display: flex; gap: var(--space-sm); margin-top: var(--space-md); flex-wrap: wrap; }
 .hero__visual {
@@ -283,10 +287,10 @@ input, textarea, select { font-family: inherit; }
 .hero__visual .layer-lines span {
   display: block;
   height: 3px;
-  background: rgba(33, 31, 27, 0.14);
+  background: rgba(53, 10, 6, 0.16);
   border-radius: 2px;
 }
-.hero__visual .layer-lines span:nth-child(odd) { background: rgba(181, 96, 47, 0.28); }
+.hero__visual .layer-lines span:nth-child(odd) { background: rgba(140, 110, 220, 0.55); }
 
 @media (max-width: 900px) {
   .hero__grid { grid-template-columns: 1fr; }
@@ -353,7 +357,7 @@ input, textarea, select { font-family: inherit; }
 .category-card::before {
   content: '';
   position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(33,31,27,0.05), rgba(33,31,27,0.65));
+  background: linear-gradient(180deg, rgba(53,10,6,0.05), rgba(53,10,6,0.68));
 }
 @media (max-width: 900px) {
   .category-grid { grid-template-columns: repeat(2, 1fr); }
@@ -387,7 +391,7 @@ input, textarea, select { font-family: inherit; }
 .product-card__overlay {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(33,31,27,0.35);
+  background: rgba(53,10,6,0.4);
   opacity: 0;
   transition: opacity var(--transition);
 }
@@ -397,7 +401,7 @@ input, textarea, select { font-family: inherit; }
 }
 .product-card__tag {
   position: absolute; top: 10px; left: 10px;
-  background: var(--color-accent); color: #fff;
+  background: var(--color-accent); color: var(--color-charcoal);
   font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
   padding: 0.35em 0.7em; border-radius: var(--radius);
 }
@@ -425,10 +429,10 @@ input, textarea, select { font-family: inherit; }
 .placeholder-art small {
   font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-stone-light);
 }
-.placeholder-art--1 { background: linear-gradient(150deg, #EFE7D8, #E4D6C3); }
-.placeholder-art--2 { background: linear-gradient(150deg, #E9E2D3, var(--color-accent-tint)); }
-.placeholder-art--3 { background: linear-gradient(150deg, #EFEAE0, #DCD2BE); }
-.placeholder-art--4 { background: linear-gradient(150deg, var(--color-accent-tint), #E6D3C0); }
+.placeholder-art--1 { background: linear-gradient(150deg, #FFF8DE, #FFE9AE); }
+.placeholder-art--2 { background: linear-gradient(150deg, #F3EAFF, #E4D3FF); }
+.placeholder-art--3 { background: linear-gradient(150deg, #FFF3C4, #FFE0A0); }
+.placeholder-art--4 { background: linear-gradient(150deg, #ECE0FF, var(--color-accent-tint)); }
 
 /* ---------- Filtros de catálogo ---------- */
 .filter-bar {
@@ -481,17 +485,19 @@ input, textarea, select { font-family: inherit; }
 
 /* ---------- Footer ---------- */
 .site-footer {
-  background: var(--color-paper);
-  border-top: 1px solid var(--color-line);
+  background: var(--color-charcoal);
+  color: var(--color-bg);
+  border-top: 1px solid rgba(255, 244, 201, 0.12);
   padding: var(--space-lg) 0 var(--space-md);
 }
+.site-footer .muted { color: var(--color-crema-muted); }
 .footer-grid {
   display: grid; grid-template-columns: 1.4fr 1fr 1fr 1.2fr; gap: var(--space-lg);
   margin-bottom: var(--space-lg);
 }
 .footer-grid h4 {
   font-family: var(--font-body); font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--color-stone); margin-bottom: var(--space-sm);
+  color: var(--color-crema-muted); margin-bottom: var(--space-sm);
 }
 .footer-grid ul { display: flex; flex-direction: column; gap: 0.6rem; }
 .footer-grid a:hover { color: var(--color-accent); }
@@ -516,7 +522,7 @@ input, textarea, select { font-family: inherit; }
 }
 .lightbox.open { display: flex; }
 .lightbox__backdrop {
-  position: absolute; inset: 0; background: rgba(33,31,27,0.55); backdrop-filter: blur(2px);
+  position: absolute; inset: 0; background: rgba(53,10,6,0.55); backdrop-filter: blur(2px);
 }
 .lightbox__panel {
   position: relative; z-index: 1;
@@ -549,11 +555,11 @@ input, textarea, select { font-family: inherit; }
   background: var(--color-paper); z-index: 400;
   transform: translateX(100%); transition: transform var(--transition);
   display: flex; flex-direction: column;
-  box-shadow: -8px 0 30px rgba(33,31,27,0.08);
+  box-shadow: -8px 0 30px rgba(53,10,6,0.08);
 }
 .cart-drawer.open { transform: translateX(0); }
 .cart-drawer__backdrop {
-  position: fixed; inset: 0; background: rgba(33,31,27,0.45); z-index: 390;
+  position: fixed; inset: 0; background: rgba(53,10,6,0.45); z-index: 390;
   opacity: 0; pointer-events: none; transition: opacity var(--transition);
 }
 .cart-drawer__backdrop.open { opacity: 1; pointer-events: auto; }

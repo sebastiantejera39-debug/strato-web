@@ -3,4 +3,4 @@ Allow: /
 Disallow: /checkout.html
 Disallow: /gracias.html
 
-Sitemap: https://strato.netlify.app/sitemap.xml
+Sitemap: https://stratouy.netlify.app/sitemap.xml
