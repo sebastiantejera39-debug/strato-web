@@ -400,6 +400,7 @@ input, textarea, select { font-family: inherit; }
   background: rgba(53,10,6,0.4);
   opacity: 0;
   transition: opacity var(--transition);
+  pointer-events: none; /* deja pasar el click a las flechas/puntitos de la galería */
 }
 .product-card__overlay span {
   color: #fff; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
@@ -420,6 +421,33 @@ input, textarea, select { font-family: inherit; }
 .product-card__foot {
   display: flex; align-items: center; justify-content: space-between; margin-top: 0.5em;
 }
+
+/* ---------- Galería de fotos (grilla de catálogo + lightbox) ---------- */
+.product-gallery { position: relative; width: 100%; height: 100%; }
+.product-gallery__track { width: 100%; height: 100%; }
+.product-gallery__track img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.product-gallery__nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.88); color: var(--color-charcoal);
+  border: none; font-size: 1.1rem; line-height: 1; z-index: 3;
+  transition: background var(--transition);
+}
+.product-gallery__nav:hover { background: #fff; }
+.product-gallery__nav--prev { left: 8px; }
+.product-gallery__nav--next { right: 8px; }
+.product-gallery__dots {
+  position: absolute; bottom: 8px; left: 0; right: 0; z-index: 3;
+  display: flex; justify-content: center; gap: 5px;
+}
+.product-gallery__dot {
+  width: 6px; height: 6px; border-radius: 50%; padding: 0;
+  background: rgba(255,255,255,0.7); border: 1px solid rgba(53,10,6,0.3);
+}
+.product-gallery__dot.active { background: var(--color-charcoal); border-color: var(--color-charcoal); }
+.lightbox__media .product-gallery__nav { width: 36px; height: 36px; font-size: 1.3rem; }
+.lightbox__media .product-gallery__dot { width: 7px; height: 7px; }
 
 /* Placeholder de foto de producto (sin fotografía real todavía) */
 .placeholder-art {
@@ -546,6 +574,11 @@ input, textarea, select { font-family: inherit; }
   width: 34px; height: 34px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
 }
+#lbColors button.active {
+  background: var(--color-charcoal);
+  border-color: var(--color-charcoal);
+  color: var(--color-paper);
+}
 .lightbox__qty { display: flex; align-items: center; gap: 0.8rem; margin: var(--space-sm) 0; }
 .lightbox__qty button {
   width: 30px; height: 30px; border: 1px solid var(--color-line); background: none;
@@ -580,6 +613,13 @@ input, textarea, select { font-family: inherit; }
 .cart-item__qty { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
 .cart-item__qty button { width: 22px; height: 22px; border: 1px solid var(--color-line); background: none; font-size: 0.8rem; }
 .cart-item__remove { font-size: 0.68rem; text-decoration: underline; color: var(--color-stone); margin-top: 0.4rem; display: inline-block; }
+.cart-item__note { margin-top: 0.5rem; }
+.cart-item__note-input {
+  width: 100%; padding: 0.5em 0.7em; border: 1px solid var(--color-line);
+  background: var(--color-paper); border-radius: var(--radius); font-size: 0.76rem; color: var(--color-ink);
+}
+.cart-item__note-input:focus { outline: none; border-color: var(--color-charcoal); }
+.cart-item__note-input::placeholder { color: var(--color-stone-light); }
 .cart-drawer__empty { text-align: center; padding: var(--space-lg) var(--space-sm); }
 .cart-drawer__foot { padding: var(--space-md); border-top: 1px solid var(--color-line); }
 .cart-drawer__row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.9rem; }
