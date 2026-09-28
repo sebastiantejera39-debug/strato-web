@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STRATO — render de productos, filtros de catálogo y lightbox de producto
+   STORGE LAB — render de productos, filtros de catálogo y lightbox de producto
    ========================================================================== */
 
 function stratoCategoryName(slug) {
@@ -51,6 +51,27 @@ function stratoRenderGrid(containerId, list) {
 
 function stratoQuickAdd(id) {
   stratoAddToCart(id, 1, null);
+}
+
+/* ---- Barra de filtros del catálogo + lista "Categorías" del footer.
+   Se arman siempre a partir de STRATO_CATEGORIES (la lista real que trae
+   supabase-client.js, o la de respaldo de products.js si Supabase no
+   respondió), así una categoría nueva creada desde el panel admin aparece
+   sola en el sitio — no hace falta tocar HTML en cada página. */
+function stratoRenderCategoryNav() {
+  const tabs = document.getElementById("filterTabs");
+  if (tabs) {
+    tabs.innerHTML =
+      '<button data-cat="todos">Todos</button>' +
+      STRATO_CATEGORIES.map((c) => '<button data-cat="' + c.slug + '">' + c.name + "</button>").join("");
+  }
+
+  const footerCats = document.getElementById("footerCategories");
+  if (footerCats) {
+    footerCats.innerHTML = STRATO_CATEGORIES.map(
+      (c) => '<li><a href="catalogo.html?cat=' + c.slug + '">' + c.name + "</a></li>"
+    ).join("");
+  }
 }
 
 /* ---- Catálogo con filtro por categoría ---- */
@@ -166,6 +187,7 @@ function stratoAddCurrentToCart() {
 
 /* Llamado desde main.js una vez que el catálogo (estático o en vivo) está listo. */
 function stratoInitProductUI() {
+  stratoRenderCategoryNav();
   stratoInitCatalog();
   stratoInitFeatured();
 
