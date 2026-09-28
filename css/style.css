@@ -281,6 +281,12 @@ input, textarea, select { font-family: inherit; }
   overflow: hidden;
   background: linear-gradient(160deg, var(--color-accent-tint), var(--color-paper) 70%);
 }
+.hero__visual video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .hero__visual .layer-lines {
   position: absolute;
   inset: 0;
