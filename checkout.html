@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Finalizar pedido — Strato</title>
+<title>Finalizar pedido — Storge Lab</title>
 <meta name="robots" content="noindex">
-<link rel="icon" type="image/svg+xml" href="images/favicon.svg">
+<link rel="icon" type="image/png" href="images/favicon.png">
+<link rel="apple-touch-icon" href="images/favicon-180.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -13,8 +14,7 @@
 <header class="site-header">
   <div class="container site-header__inner">
     <a href="index.html" class="logo">
-      <span class="layers-mark"><span></span><span></span><span></span></span>
-      <span>Strato<small>Objetos impresos en 3D</small></span>
+      <img src="images/logo-storge-wide.png" alt="Storge Lab">
     </a>
     <nav class="main-nav">
       <ul>
@@ -114,7 +114,7 @@
 <footer class="site-footer">
   <div class="container">
     <div class="footer-bottom" style="border-top:none;padding-top:0;">
-      <span>© <span data-year></span> Strato. Hecho en Montevideo, Uruguay.</span>
+      <span>© <span data-year></span> Storge Lab. Hecho en Montevideo, Uruguay.</span>
     </div>
   </div>
 </footer>
@@ -135,6 +135,10 @@
 <script src="js/cart.js"></script>
 <script src="js/main.js"></script>
 <script>
+  function escHtml(str) {
+    return String(str || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
   function renderSummary() {
     const lines = stratoCartDetailed();
     const empty = document.getElementById("checkoutEmpty");
@@ -152,8 +156,11 @@
         const priceText = l.product.price != null
           ? "$U " + (l.product.price * l.qty).toLocaleString("es-UY")
           : l.product.priceLabel || "Cotizar";
-        return '<div class="order-summary__item"><span>' + l.qty + '× ' + l.product.name +
-          (l.color ? ' (' + l.color + ')' : '') + '</span><span>' + priceText + '</span></div>';
+        const noteHtml = l.note
+          ? '<div class="muted" style="font-size:0.74rem;margin-top:0.1rem">Obs: ' + escHtml(l.note) + '</div>'
+          : '';
+        return '<div class="order-summary__item"><span>' + l.qty + '× ' + escHtml(l.product.name) +
+          (l.color ? ' (' + escHtml(l.color) + ')' : '') + noteHtml + '</span><span>' + priceText + '</span></div>';
       })
       .join("");
 
@@ -181,12 +188,13 @@
     const notes = document.getElementById("fNotes").value;
     const subtotal = stratoCartSubtotal();
 
-    let msg = "Hola! Quiero confirmar este pedido de Strato:\n\n";
+    let msg = "Hola! Quiero confirmar este pedido de Storge Lab:\n\n";
     lines.forEach((l) => {
       const priceText = l.product.price != null
         ? "$U " + (l.product.price * l.qty).toLocaleString("es-UY")
         : l.product.priceLabel || "Cotizar";
       msg += "• " + l.qty + "x " + l.product.name + (l.color ? " (" + l.color + ")" : "") + " — " + priceText + "\n";
+      if (l.note) msg += "   Obs: " + l.note + "\n";
     });
     msg += "\nSubtotal: $U " + subtotal.toLocaleString("es-UY");
     msg += "\n\nNombre: " + name;
@@ -213,6 +221,7 @@
           nombre: l.product.name,
           qty: l.qty,
           color: l.color || null,
+          nota: l.note || null,
           precio: l.product.price,
         })),
         subtotal: subtotal,
