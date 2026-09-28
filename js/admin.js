@@ -322,7 +322,11 @@
 
   function detallePedido(p) {
     const items = (p.items || [])
-      .map((it) => "• " + it.qty + "× " + escHtml(it.nombre) + (it.color ? " (" + escHtml(it.color) + ")" : "") + " — " + fmtMoney(it.precio))
+      .map(
+        (it) =>
+          "• " + it.qty + "× " + escHtml(it.nombre) + (it.color ? " (" + escHtml(it.color) + ")" : "") + " — " + fmtMoney(it.precio) +
+          (it.nota ? "<br>&nbsp;&nbsp;<em>Obs: " + escHtml(it.nota) + "</em>" : "")
+      )
       .join("<br>");
     return (
       "<strong>Items:</strong><br>" +

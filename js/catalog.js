@@ -7,6 +7,70 @@ function stratoCategoryName(slug) {
   return cat ? cat.name : "";
 }
 
+/* ---- Galería de fotos: cuando el producto tiene más de una imagen, se
+   pueden pasar con flechas o puntitos, tanto en la tarjeta del catálogo
+   como en el lightbox de "ver producto". data-product-id identifica el
+   producto para que un solo listener delegado (stratoInitGalleries)
+   sirva a todas las instancias, sin re-atarlo en cada render. ---- */
+function stratoGalleryHtml(product) {
+  const images = (product && product.images) || [];
+  if (!images.length) return '<div class="product-gallery">' + stratoPlaceholderArt(product, 0) + "</div>";
+
+  const alt = (product.name || "").replace(/"/g, "&quot;");
+  let html = '<div class="product-gallery" data-product-id="' + product.id + '" data-index="0">';
+  html += '<div class="product-gallery__track"><img src="' + images[0] + '" alt="' + alt + '" loading="lazy"></div>';
+  if (images.length > 1) {
+    html +=
+      '<button type="button" class="product-gallery__nav product-gallery__nav--prev" aria-label="Foto anterior">‹</button>' +
+      '<button type="button" class="product-gallery__nav product-gallery__nav--next" aria-label="Foto siguiente">›</button>' +
+      '<div class="product-gallery__dots">' +
+      images.map((_, i) => '<span class="product-gallery__dot' + (i === 0 ? " active" : "") + '"></span>').join("") +
+      "</div>";
+  }
+  html += "</div>";
+  return html;
+}
+
+function stratoGallerySetIndex(wrapper, index) {
+  const product = STRATO_PRODUCTS.find((p) => p.id === wrapper.dataset.productId);
+  if (!product || !product.images || !product.images.length) return;
+  const total = product.images.length;
+  index = ((index % total) + total) % total;
+  wrapper.dataset.index = index;
+  const img = wrapper.querySelector(".product-gallery__track img");
+  if (img) img.src = product.images[index];
+  wrapper.querySelectorAll(".product-gallery__dot").forEach((dot, i) => dot.classList.toggle("active", i === index));
+}
+
+/* Un solo listener delegado (fase de captura, para adelantarse al onclick
+   de .product-card__frame que abre el lightbox) cubre todas las galerías
+   de la página, incluso las que se re-dibujan al filtrar. */
+let stratoGalleriesReady = false;
+function stratoInitGalleries() {
+  if (stratoGalleriesReady) return;
+  stratoGalleriesReady = true;
+  document.addEventListener(
+    "click",
+    (e) => {
+      const wrapper = e.target.closest(".product-gallery");
+      if (!wrapper) return;
+      const nav = e.target.closest(".product-gallery__nav");
+      const dot = e.target.closest(".product-gallery__dot");
+      if (!nav && !dot) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (nav) {
+        const current = parseInt(wrapper.dataset.index || "0", 10);
+        stratoGallerySetIndex(wrapper, current + (nav.classList.contains("product-gallery__nav--prev") ? -1 : 1));
+      } else {
+        const dots = Array.from(wrapper.querySelectorAll(".product-gallery__dot"));
+        stratoGallerySetIndex(wrapper, dots.indexOf(dot));
+      }
+    },
+    true
+  );
+}
+
 function stratoProductCard(product, index) {
   const priceText = stratoFormatPrice(product);
   const tagHtml = product.tag ? '<span class="product-card__tag">' + product.tag + "</span>" : "";
@@ -16,7 +80,7 @@ function stratoProductCard(product, index) {
     product.id +
     "')\">" +
     tagHtml +
-    stratoProductMedia(product, index) +
+    stratoGalleryHtml(product) +
     '<div class="product-card__overlay"><span>Ver producto</span></div>' +
     "</div>" +
     '<div class="product-card__body">' +
@@ -127,7 +191,7 @@ function stratoOpenProduct(id) {
   }
   stratoCurrentProduct = product;
 
-  document.getElementById("lbMedia").innerHTML = stratoProductMedia(product, 0);
+  document.getElementById("lbMedia").innerHTML = stratoGalleryHtml(product);
   document.getElementById("lbCat").textContent = stratoCategoryName(product.category);
   document.getElementById("lbTitle").textContent = product.name;
   document.getElementById("lbPrice").textContent = stratoFormatPrice(product);
@@ -188,6 +252,7 @@ function stratoAddCurrentToCart() {
 /* Llamado desde main.js una vez que el catálogo (estático o en vivo) está listo. */
 function stratoInitProductUI() {
   stratoRenderCategoryNav();
+  stratoInitGalleries();
   stratoInitCatalog();
   stratoInitFeatured();
 

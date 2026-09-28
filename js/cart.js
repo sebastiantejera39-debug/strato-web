@@ -36,7 +36,7 @@ function stratoAddToCart(productId, qty, color) {
   if (existing) {
     existing.qty += qty;
   } else {
-    cart.push({ id: productId, qty: qty, color: color || null });
+    cart.push({ id: productId, qty: qty, color: color || null, note: "" });
   }
   stratoSaveCart(cart);
   stratoRenderCartDrawer();
@@ -58,6 +58,18 @@ function stratoUpdateLineQty(productId, color, qty) {
 
 function stratoRemoveLine(productId, color) {
   stratoUpdateLineQty(productId, color, 0);
+}
+
+/* Observación puntual de ese producto en el carrito (ej. aclarar un color,
+   un detalle del pedido). Guarda sin re-dibujar el drawer, para no perder
+   el foco/cursor mientras el cliente está escribiendo. */
+function stratoSetLineNote(productId, color, note) {
+  const cart = stratoGetCart();
+  const key = stratoLineKey(productId, color);
+  const line = cart.find((l) => stratoLineKey(l.id, l.color) === key);
+  if (!line) return;
+  line.note = note;
+  stratoSaveCart(cart);
 }
 
 function stratoClearCart() {
@@ -170,6 +182,15 @@ function stratoRenderCartDrawer() {
         "', " +
         (line.color ? "'" + line.color + "'" : "null") +
         ')">Quitar</a>' +
+        '<div class="cart-item__note">' +
+        '<input type="text" class="cart-item__note-input" placeholder="Observación (color, detalle...)" value="' +
+        (line.note || "").replace(/"/g, "&quot;") +
+        '" oninput="stratoSetLineNote(\'' +
+        p.id +
+        "', " +
+        (line.color ? "'" + line.color + "'" : "null") +
+        ", this.value)\">" +
+        "</div>" +
         "</div>" +
         '<div class="cart-item__price">' +
         priceText +
