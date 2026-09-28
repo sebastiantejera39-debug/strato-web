@@ -42,7 +42,7 @@ create table if not exists pedidos (
   direccion text,
   pago text,
   notas text,
-  items jsonb not null default '[]',     -- [{producto_id, nombre, qty, color, precio}]
+  items jsonb not null default '[]',     -- [{producto_id, nombre, qty, color, nota, precio}]
   subtotal numeric not null default 0,
   estado text not null default 'nuevo',  -- nuevo | confirmado | en_produccion | listo | entregado | cancelado
   created_at timestamptz not null default now()
