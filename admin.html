@@ -115,6 +115,34 @@
   .inline-check input { width: auto; margin: 0; }
   .inline-check label { margin: 0; text-transform: none; font-size: 13px; color: var(--text); }
 
+  /* ---- Categorías del producto (checkboxes) ---- */
+  .cat-check-group { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 10px 0 16px; }
+  .cat-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); text-transform: none; margin: 0; cursor: pointer; }
+  .cat-check input { width: auto; margin: 0; }
+
+  /* ---- Descripción con formato (negrita/cursiva/subrayado) ---- */
+  .rte-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+  .rte-toolbar button {
+    width: 30px; height: 30px; border: 1px solid var(--border); background: #fff; border-radius: 3px;
+    font-size: 13px; color: var(--text); display: flex; align-items: center; justify-content: center;
+  }
+  .rte-toolbar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rte-editor {
+    width: 100%; min-height: 80px; border: 1px solid var(--border); border-radius: 3px;
+    padding: 10px 12px; font-size: 14px; font-family: inherit; margin-bottom: 16px; line-height: 1.5;
+  }
+  .rte-editor:focus { outline: none; border-color: var(--accent); }
+
+  /* ---- Modal de recorte de foto ---- */
+  .crop-modal { display: none; position: fixed; inset: 0; z-index: 500; align-items: center; justify-content: center; background: rgba(36,16,8,0.62); padding: 20px; }
+  .crop-modal.open { display: flex; }
+  .crop-modal__box { background: #fff; border-radius: 4px; padding: 24px; max-width: 520px; width: 100%; text-align: center; }
+  .crop-modal__box h2 { font-family: var(--font-display); font-weight: 700; font-size: 17px; color: var(--accent); margin-bottom: 14px; text-align: left; }
+  .crop-stage { position: relative; display: inline-block; max-width: 100%; line-height: 0; touch-action: none; background: #111; }
+  .crop-stage img { display: block; max-width: 480px; max-height: 480px; width: auto; height: auto; user-select: none; -webkit-user-drag: none; }
+  .crop-box { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 2000px rgba(0,0,0,0.5); cursor: move; touch-action: none; }
+  .crop-handle { position: absolute; right: -8px; bottom: -8px; width: 18px; height: 18px; background: #fff; border: 2px solid var(--accent); border-radius: 50%; cursor: nwse-resize; touch-action: none; }
+
   /* ---- Calculadora de costos ---- */
   input[type="range"] { padding: 0; background: none; border: none; margin-bottom: 6px; accent-color: var(--accent); }
   .calc-box { background: var(--bg-section); border: 1px solid var(--border); border-radius: 4px; padding: 18px 20px; margin-bottom: 16px; }
@@ -247,8 +275,8 @@
                 <input type="text" id="prod-nombre" required>
               </div>
               <div>
-                <label for="prod-categoria">Categoría</label>
-                <select id="prod-categoria" required></select>
+                <label>Categorías</label>
+                <div class="cat-check-group" id="prod-categorias-check"></div>
               </div>
             </div>
             <div class="grid2">
@@ -271,7 +299,12 @@
             <input type="text" id="prod-color-input" placeholder="Escribí un color y presioná Enter">
 
             <label for="prod-descripcion">Descripción</label>
-            <textarea id="prod-descripcion" rows="3"></textarea>
+            <div class="rte-toolbar">
+              <button type="button" data-cmd="bold" title="Negrita"><b>N</b></button>
+              <button type="button" data-cmd="italic" title="Cursiva"><i>C</i></button>
+              <button type="button" data-cmd="underline" title="Subrayado"><u>S</u></button>
+            </div>
+            <div id="prod-descripcion" class="rte-editor" contenteditable="true"></div>
 
             <div class="grid2">
               <div>
@@ -345,6 +378,9 @@
           </div>
           <label for="cat-descripcion">Descripción corta</label>
           <input type="text" id="cat-descripcion" placeholder="Lámparas y veladores">
+          <label>Foto de portada (se muestra en el carrusel de la home)</label>
+          <div class="img-manager" id="cat-img-manager"></div>
+          <input type="file" id="cat-img-input" accept="image/*" style="display:none">
           <div class="grid2">
             <button type="submit" class="btn" id="cat-submit-btn">Guardar categoría</button>
             <button type="button" class="btn-secondary" id="cat-cancel-btn" style="display:none">Cancelar edición</button>
@@ -604,6 +640,24 @@
     </section>
 
   </main>
+</div>
+
+<!-- ============ RECORTAR FOTO ============ -->
+<div class="crop-modal" id="crop-modal">
+  <div class="crop-modal__box">
+    <h2>Recortar foto</h2>
+    <div class="crop-stage" id="crop-stage">
+      <img id="crop-img" alt="">
+      <div class="crop-box" id="crop-box">
+        <div class="crop-handle" id="crop-handle"></div>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px;margin:10px 0 16px;">Arrastrá el recuadro para elegir qué parte mostrar, y la esquina para agrandarlo o achicarlo. Se sube recortado en cuadrado.</p>
+    <div class="grid2">
+      <button type="button" class="btn" id="crop-confirm-btn">Recortar y subir</button>
+      <button type="button" class="btn-secondary" id="crop-cancel-btn">Cancelar</button>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
