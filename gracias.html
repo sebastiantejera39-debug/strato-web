@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>¡Gracias! — Strato</title>
+<title>¡Gracias! — Storge Lab</title>
 <meta name="robots" content="noindex">
-<link rel="icon" type="image/svg+xml" href="images/favicon.svg">
+<link rel="icon" type="image/png" href="images/favicon.png">
+<link rel="apple-touch-icon" href="images/favicon-180.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -13,8 +14,7 @@
 <header class="site-header">
   <div class="container site-header__inner">
     <a href="index.html" class="logo">
-      <span class="layers-mark"><span></span><span></span><span></span></span>
-      <span>Strato<small>Objetos impresos en 3D</small></span>
+      <img src="images/logo-storge-wide.png" alt="Storge Lab">
     </a>
     <nav class="main-nav">
       <ul>
@@ -40,10 +40,10 @@
   <section class="section text-center">
     <div class="container reveal in" style="max-width:560px">
       <span class="layers-mark" style="color:var(--color-accent);justify-content:center;align-items:center;margin:0 auto 1.5rem;"><span></span><span></span><span></span></span>
-      <span class="eyebrow" style="justify-content:center">Pedido enviado</span>
-      <h1>¡Gracias!</h1>
-      <p>Tu pedido se envió por WhatsApp. En breve te confirmamos disponibilidad, tiempo de impresión y coordinamos la entrega o el envío.</p>
-      <div class="hero__actions" style="justify-content:center">
+      <span class="eyebrow" style="justify-content:center" id="graciasEyebrow">Pedido enviado</span>
+      <h1 id="graciasTitulo">¡Gracias!</h1>
+      <p id="graciasTexto">Tu pedido se envió por WhatsApp. En breve te confirmamos disponibilidad, tiempo de impresión y coordinamos la entrega o el envío.</p>
+      <div class="hero__actions" style="justify-content:center" id="graciasAcciones">
         <a href="catalogo.html" class="btn btn-ghost">Seguir viendo el catálogo</a>
         <a href="index.html" class="btn btn-primary">Volver al inicio</a>
       </div>
@@ -54,7 +54,7 @@
 <footer class="site-footer">
   <div class="container">
     <div class="footer-bottom" style="border-top:none;padding-top:0;justify-content:center;">
-      <span>© <span data-year></span> Strato. Hecho en Montevideo, Uruguay.</span>
+      <span>© <span data-year></span> Storge Lab. Hecho en Montevideo, Uruguay.</span>
     </div>
   </div>
 </footer>
@@ -74,5 +74,36 @@
 <script src="js/supabase-client.js"></script>
 <script src="js/cart.js"></script>
 <script src="js/main.js"></script>
+<script>
+  // Si venimos de vuelta de Mercado Pago, la URL trae ?estado=success|failure|pending.
+  // Si no hay ?estado (pedido confirmado por WhatsApp/transferencia), dejamos el
+  // mensaje por defecto de arriba — ese flujo ya limpió el carrito él mismo.
+  (function () {
+    const estado = new URLSearchParams(window.location.search).get("estado");
+    if (!estado) return;
+
+    const eyebrow = document.getElementById("graciasEyebrow");
+    const titulo = document.getElementById("graciasTitulo");
+    const texto = document.getElementById("graciasTexto");
+    const acciones = document.getElementById("graciasAcciones");
+
+    if (estado === "success") {
+      if (typeof stratoClearCart === "function") stratoClearCart();
+      eyebrow.textContent = "Pago confirmado";
+      titulo.textContent = "¡Gracias por tu compra!";
+      texto.textContent = "Recibimos tu pago en Mercado Pago. En breve te confirmamos el pedido y coordinamos la entrega o el envío.";
+    } else if (estado === "pending") {
+      eyebrow.textContent = "Pago pendiente";
+      titulo.textContent = "Tu pago está en proceso";
+      texto.textContent = "Mercado Pago está terminando de procesar el pago. Te avisamos apenas se confirme — tu carrito sigue guardado por las dudas.";
+      acciones.innerHTML = '<a href="checkout.html" class="btn btn-ghost">Volver al checkout</a><a href="index.html" class="btn btn-primary">Volver al inicio</a>';
+    } else if (estado === "failure") {
+      eyebrow.textContent = "Pago no completado";
+      titulo.textContent = "El pago no se pudo procesar";
+      texto.textContent = "Hubo un problema al pagar con Mercado Pago. Tu carrito sigue disponible — podés volver a intentar o coordinar por transferencia.";
+      acciones.innerHTML = '<a href="checkout.html" class="btn btn-ghost">Volver al checkout</a><a href="index.html" class="btn btn-primary">Volver al inicio</a>';
+    }
+  })();
+</script>
 </body>
 </html>

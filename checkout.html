@@ -39,9 +39,8 @@
 <main>
   <div class="page-banner">
     <div class="container">
-      <span class="eyebrow">Pedido</span>
       <h1>Finalizar pedido</h1>
-      <p class="muted">Completá tus datos. Al confirmar se abre WhatsApp con el detalle del pedido listo para enviarnos — todavía no hay pago online, coordinamos la entrega y la forma de pago por ese medio.</p>
+      <p class="muted">Completá con tus datos personales/empresa para la facturación.</p>
     </div>
   </div>
 
@@ -55,52 +54,101 @@
 
       <form id="checkoutForm" class="checkout-grid">
         <div>
-          <h3>Tus datos</h3>
+          <h4 class="checkout-subhead">Datos personales</h4>
           <div class="form-grid">
             <div class="field">
               <label for="fName">Nombre y apellido</label>
               <input type="text" id="fName" required>
             </div>
             <div class="field">
-              <label for="fPhone">Teléfono</label>
+              <label for="fPhone">Contacto</label>
               <input type="tel" id="fPhone" required>
             </div>
             <div class="field full">
               <label for="fEmail">Email (opcional)</label>
               <input type="email" id="fEmail">
             </div>
-            <div class="field">
-              <label for="fDelivery">Entrega</label>
+          </div>
+
+          <h4 class="checkout-subhead">Entrega</h4>
+          <div class="form-grid">
+            <div class="field full">
+              <label for="fDelivery">Modo de entrega</label>
               <select id="fDelivery">
-                <option value="Retiro en Montevideo">Retiro en Montevideo</option>
+                <option value="Retiro en Montevideo (zona centro)">Retiro en Montevideo (zona centro)</option>
                 <option value="Envío">Envío a domicilio</option>
               </select>
             </div>
-            <div class="field">
-              <label for="fPayment">Forma de pago</label>
-              <select id="fPayment">
-                <option value="A coordinar por WhatsApp">A coordinar por WhatsApp</option>
-                <option value="Transferencia bancaria">Transferencia bancaria</option>
-                <option value="Efectivo al retirar">Efectivo al retirar</option>
+            <div class="field" id="deptoField" style="display:none">
+              <label for="fDepto">Departamento</label>
+              <select id="fDepto">
+                <option>Montevideo</option>
+                <option>Artigas</option>
+                <option>Canelones</option>
+                <option>Cerro Largo</option>
+                <option>Colonia</option>
+                <option>Durazno</option>
+                <option>Flores</option>
+                <option>Florida</option>
+                <option>Lavalleja</option>
+                <option>Maldonado</option>
+                <option>Paysandú</option>
+                <option>Río Negro</option>
+                <option>Rivera</option>
+                <option>Rocha</option>
+                <option>Salto</option>
+                <option>San José</option>
+                <option>Soriano</option>
+                <option>Tacuarembó</option>
+                <option>Treinta y Tres</option>
               </select>
             </div>
             <div class="field full" id="addressField" style="display:none">
-              <label for="fAddress">Dirección de envío</label>
-              <input type="text" id="fAddress" placeholder="Calle, número, ciudad">
-            </div>
-            <div class="field full">
-              <label for="fNotes">Notas (color, referencia, lo que necesites contarnos)</label>
-              <textarea id="fNotes"></textarea>
+              <label for="fAddress">Dirección completa</label>
+              <input type="text" id="fAddress" placeholder="Calle, número, ciudad, referencias">
             </div>
           </div>
-          <button type="submit" class="btn btn-primary" style="margin-top:1.5rem">Confirmar pedido por WhatsApp</button>
+
+          <h4 class="checkout-subhead">Forma de pago</h4>
+          <div class="payment-method">
+            <div class="payment-method__toggle">
+              <button type="button" class="payment-method__btn active" data-method="mp" id="btnMethodMp">Mercado Pago</button>
+              <button type="button" class="payment-method__btn" data-method="transferencia" id="btnMethodTransferencia">Transferencia Bancaria</button>
+            </div>
+            <div class="payment-method__info" id="infoMp">
+              <p>Pagás con tarjeta Visa, Mastercard, OCA, Cabal, Diners o Líder.</p>
+              <p class="payment-method__warning">Suma un 8% más, que se agrega al total al generar el enlace de pago en Mercado Pago.</p>
+            </div>
+            <div class="payment-method__info" id="infoTransferencia" style="display:none">
+              <p>Transferencia a cuenta de Mercado Pago. Te pasamos los datos para transferir por WhatsApp al confirmar el pedido.</p>
+            </div>
+          </div>
+
+          <div class="field full" style="margin-top:1.5rem">
+            <label for="fNotes">Notas (color, referencia, lo que necesites contarnos)</label>
+            <textarea id="fNotes"></textarea>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="checkoutSubmitBtn" style="margin-top:1.5rem">Pagar con Mercado Pago</button>
         </div>
 
         <aside class="order-summary">
           <span class="eyebrow">Tu pedido</span>
           <div id="summaryItems" style="margin:1rem 0"></div>
-          <div class="cart-drawer__row total">
+          <div class="cart-drawer__row" id="summarySubtotalRow">
             <span>Subtotal</span>
+            <span id="summarySubtotal">$U 0</span>
+          </div>
+          <div class="cart-drawer__row cart-drawer__row--descuento" id="summaryDescuentoRow" style="display:none">
+            <span>Descuento</span>
+            <span id="summaryDescuento">-$U 0</span>
+          </div>
+          <div class="cart-drawer__row" id="summaryRecargoRow" style="display:none">
+            <span>Recargo Mercado Pago (8%)</span>
+            <span id="summaryRecargo">$U 0</span>
+          </div>
+          <div class="cart-drawer__row total">
+            <span>Total</span>
             <span id="summaryTotal">$U 0</span>
           </div>
           <p class="muted" style="font-size:0.78rem;margin-top:0.5rem">Envío y productos a cotizar se confirman por WhatsApp antes de coordinar el pago.</p>
@@ -135,6 +183,9 @@
 <script src="js/cart.js"></script>
 <script src="js/main.js"></script>
 <script>
+  const MP_RECARGO_PCT = 8;
+  let checkoutMethod = "mp";
+
   function escHtml(str) {
     return String(str || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   }
@@ -164,30 +215,103 @@
       })
       .join("");
 
-    document.getElementById("summaryTotal").textContent = "$U " + stratoCartSubtotal().toLocaleString("es-UY");
+    updateTotals();
   }
 
+  function updateTotals() {
+    const subtotal = stratoCartSubtotal();
+    const descuento = stratoCartDescuento();
+    const baseTotal = stratoCartTotal();
+    const recargo = checkoutMethod === "mp" ? Math.round(baseTotal * (MP_RECARGO_PCT / 100)) : 0;
+    const finalTotal = baseTotal + recargo;
+
+    document.getElementById("summarySubtotal").textContent = "$U " + subtotal.toLocaleString("es-UY");
+
+    const descuentoRow = document.getElementById("summaryDescuentoRow");
+    if (descuento > 0) {
+      descuentoRow.style.display = "flex";
+      document.getElementById("summaryDescuento").textContent = "-$U " + descuento.toLocaleString("es-UY");
+    } else {
+      descuentoRow.style.display = "none";
+    }
+
+    const recargoRow = document.getElementById("summaryRecargoRow");
+    if (recargo > 0) {
+      recargoRow.style.display = "flex";
+      document.getElementById("summaryRecargo").textContent = "$U " + recargo.toLocaleString("es-UY");
+    } else {
+      recargoRow.style.display = "none";
+    }
+
+    document.getElementById("summaryTotal").textContent = "$U " + finalTotal.toLocaleString("es-UY");
+  }
+
+  function setCheckoutMethod(method) {
+    checkoutMethod = method;
+    document.getElementById("btnMethodMp").classList.toggle("active", method === "mp");
+    document.getElementById("btnMethodTransferencia").classList.toggle("active", method === "transferencia");
+    document.getElementById("infoMp").style.display = method === "mp" ? "block" : "none";
+    document.getElementById("infoTransferencia").style.display = method === "transferencia" ? "block" : "none";
+    document.getElementById("checkoutSubmitBtn").textContent =
+      method === "mp" ? "Pagar con Mercado Pago" : "Confirmar pedido por WhatsApp";
+    updateTotals();
+  }
+
+  document.getElementById("btnMethodMp").addEventListener("click", () => setCheckoutMethod("mp"));
+  document.getElementById("btnMethodTransferencia").addEventListener("click", () => setCheckoutMethod("transferencia"));
+
   document.getElementById("fDelivery").addEventListener("change", (e) => {
-    document.getElementById("addressField").style.display = e.target.value === "Envío" ? "block" : "none";
+    const isEnvio = e.target.value === "Envío";
+    document.getElementById("addressField").style.display = isEnvio ? "block" : "none";
+    document.getElementById("deptoField").style.display = isEnvio ? "block" : "none";
   });
 
-  document.getElementById("checkoutForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const lines = stratoCartDetailed();
-    if (!lines.length) return;
+  async function pagarConMercadoPago(lines, datosComunes) {
+    const submitBtn = document.getElementById("checkoutSubmitBtn");
+    const items = lines.map((l) => ({
+      nombre: l.product.name,
+      color: l.color || null,
+      qty: l.qty,
+      precio: l.product.price || 0,
+    }));
 
-    const submitBtn = document.querySelector('#checkoutForm button[type="submit"]');
-    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Enviando..."; }
+    // Guardamos el pedido en Supabase (best-effort) antes de ir a Mercado Pago,
+    // así queda registrado aunque el cliente no vuelva a completar el pago.
+    if (typeof stratoInsertPedido === "function") {
+      await stratoInsertPedido(Object.assign({}, datosComunes, {
+        pago: "Mercado Pago",
+        items: lines.map((l) => ({
+          producto_id: l.product.id,
+          nombre: l.product.name,
+          qty: l.qty,
+          color: l.color || null,
+          nota: l.note || null,
+          precio: l.product.price,
+        })),
+      }));
+    }
 
-    const name = document.getElementById("fName").value;
-    const phone = document.getElementById("fPhone").value;
-    const email = document.getElementById("fEmail").value;
-    const delivery = document.getElementById("fDelivery").value;
-    const payment = document.getElementById("fPayment").value;
-    const address = document.getElementById("fAddress").value;
-    const notes = document.getElementById("fNotes").value;
-    const subtotal = stratoCartSubtotal();
+    try {
+      const resp = await fetch("/api/create-preference", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cart: items, recargoPct: MP_RECARGO_PCT }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.init_point) {
+        throw new Error((data && data.error) || "No se pudo generar el link de pago");
+      }
+      // No limpiamos el carrito acá: si el cliente abandona el pago en Mercado
+      // Pago y vuelve, el carrito sigue disponible para reintentar.
+      window.location.href = data.init_point;
+    } catch (err) {
+      console.error("Error al crear preferencia de Mercado Pago:", err);
+      alert("No pudimos conectar con Mercado Pago. Probá de nuevo en unos segundos, o elegí Transferencia Bancaria.");
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Pagar con Mercado Pago"; }
+    }
+  }
 
+  async function pagarPorTransferencia(lines, datosComunes, subtotal, descuento, total) {
     let msg = "Hola! Quiero confirmar este pedido de Storge Lab:\n\n";
     lines.forEach((l) => {
       const priceText = l.product.price != null
@@ -197,25 +321,18 @@
       if (l.note) msg += "   Obs: " + l.note + "\n";
     });
     msg += "\nSubtotal: $U " + subtotal.toLocaleString("es-UY");
-    msg += "\n\nNombre: " + name;
-    msg += "\nTeléfono: " + phone;
-    msg += "\nEntrega: " + delivery;
-    if (delivery === "Envío" && address) msg += "\nDirección: " + address;
-    msg += "\nPago: " + payment;
-    if (notes) msg += "\nNotas: " + notes;
+    if (descuento > 0) msg += "\nDescuento: -$U " + descuento.toLocaleString("es-UY");
+    msg += "\nTotal: $U " + total.toLocaleString("es-UY");
+    msg += "\n\nNombre: " + datosComunes.cliente_nombre;
+    msg += "\nContacto: " + datosComunes.cliente_telefono;
+    msg += "\nEntrega: " + datosComunes.entrega;
+    if (datosComunes.direccion) msg += "\nDirección: " + datosComunes.direccion;
+    msg += "\nPago: Transferencia Bancaria (Cuenta Mercado Pago)";
+    if (datosComunes.notas) msg += "\nNotas: " + datosComunes.notas;
 
-    // Best-effort: si Supabase está configurado, guarda el pedido para que
-    // aparezca en el panel admin. Si no, o si falla, el pedido igual llega
-    // por WhatsApp — nunca bloqueamos el checkout por esto.
     if (typeof stratoInsertPedido === "function") {
-      await stratoInsertPedido({
-        cliente_nombre: name,
-        cliente_telefono: phone,
-        cliente_email: email || null,
-        entrega: delivery,
-        direccion: delivery === "Envío" ? address : null,
-        pago: payment,
-        notas: notes || null,
+      await stratoInsertPedido(Object.assign({}, datosComunes, {
+        pago: "Transferencia bancaria",
         items: lines.map((l) => ({
           producto_id: l.product.id,
           nombre: l.product.name,
@@ -224,13 +341,42 @@
           nota: l.note || null,
           precio: l.product.price,
         })),
-        subtotal: subtotal,
-      });
+      }));
     }
 
     window.open(stratoWhatsAppLink(msg), "_blank");
     stratoClearCart();
     window.location.href = "gracias.html";
+  }
+
+  document.getElementById("checkoutForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const lines = stratoCartDetailed();
+    if (!lines.length) return;
+
+    const submitBtn = document.getElementById("checkoutSubmitBtn");
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Procesando..."; }
+
+    const delivery = document.getElementById("fDelivery").value;
+    const isEnvio = delivery === "Envío";
+    const depto = document.getElementById("fDepto").value;
+    const address = document.getElementById("fAddress").value;
+
+    const datosComunes = {
+      cliente_nombre: document.getElementById("fName").value,
+      cliente_telefono: document.getElementById("fPhone").value,
+      cliente_email: document.getElementById("fEmail").value || null,
+      entrega: isEnvio ? (delivery + " — " + depto) : delivery,
+      direccion: isEnvio ? address : null,
+      notas: document.getElementById("fNotes").value || null,
+      subtotal: stratoCartSubtotal(),
+    };
+
+    if (checkoutMethod === "mp") {
+      await pagarConMercadoPago(lines, datosComunes);
+    } else {
+      await pagarPorTransferencia(lines, datosComunes, stratoCartSubtotal(), stratoCartDescuento(), stratoCartTotal());
+    }
   });
 
   document.addEventListener("strato:catalog-ready", renderSummary);
