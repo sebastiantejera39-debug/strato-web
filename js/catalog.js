@@ -367,6 +367,7 @@ function stratoResetLightboxDesc() {
   const toggle = document.getElementById("lbDescToggle");
   if (!desc || !toggle) return;
   desc.classList.remove("is-expanded", "has-more");
+  desc.scrollTop = 0;
   toggle.textContent = "Ver más";
   toggle.style.display = "none";
   // Se mide en el próximo frame: recién ahí el navegador ya aplicó el
@@ -385,6 +386,7 @@ function stratoToggleLightboxDesc() {
   if (!desc || !toggle) return;
   const expanded = desc.classList.toggle("is-expanded");
   toggle.textContent = expanded ? "Ver menos" : "Ver más";
+  if (!expanded) desc.scrollTop = 0;
 }
 
 function stratoCloseProduct() {
