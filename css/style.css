@@ -763,6 +763,29 @@ input, textarea, select { font-family: inherit; }
 .cart-drawer__foot { padding: var(--space-md); border-top: 1px solid var(--color-line); }
 .cart-drawer__row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.9rem; }
 .cart-drawer__row.total { font-size: 1.1rem; font-family: var(--font-display); }
+.cart-drawer__row--descuento { color: var(--color-charcoal); }
+
+/* Cupón de descuento: por ahora no hay códigos cargados (ver STRATO_CUPONES
+   en js/cart.js) — esto deja el campo listo para sumarlos más adelante sin
+   tener que tocar este layout. */
+.cart-cupon { display: flex; gap: 0.5rem; margin-bottom: 0.4rem; }
+.cart-cupon__input {
+  flex: 1 1 auto; min-width: 0;
+  padding: 0.6em 0.8em; border: 1px solid var(--color-line);
+  background: var(--color-paper); border-radius: var(--radius);
+  font-size: 0.82rem; color: var(--color-ink);
+}
+.cart-cupon__input:focus { outline: none; border-color: var(--color-charcoal); }
+.cart-cupon__input::placeholder { color: var(--color-stone-light); }
+.cart-cupon__feedback { font-size: 0.74rem; color: var(--color-charcoal); margin: -0.1rem 0 0.75rem; min-height: 1em; }
+.cart-cupon--applied {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  background: var(--color-accent-tint); border-radius: var(--radius);
+  padding: 0.6em 0.8em; margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+}
+.cart-cupon--applied strong { font-family: var(--font-display); }
+.cart-cupon--applied a { font-size: 0.72rem; text-decoration: underline; color: var(--color-stone); cursor: pointer; }
 
 /* ---------- Formularios (checkout / contacto) ---------- */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm) var(--space-md); }
