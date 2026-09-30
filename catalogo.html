@@ -131,18 +131,25 @@
     <button class="lightbox__close" id="lbClose" aria-label="Cerrar">✕</button>
     <div class="lightbox__media" id="lbMedia"></div>
     <div class="lightbox__info">
-      <div class="product-card__cat" id="lbCat"></div>
-      <h3 class="product-card__title" style="font-size:1.5rem" id="lbTitle"></h3>
-      <p class="product-card__price" id="lbPrice" style="font-size:1.2rem;margin-bottom:1rem;"></p>
-      <p id="lbDesc"></p>
-      <p class="muted" id="lbMaterial" style="font-size:0.8rem;"></p>
-      <div id="lbColors" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin:1rem 0;"></div>
-      <div class="lightbox__qty">
-        <button onclick="stratoChangeQty(-1)">–</button>
-        <span id="lbQty">1</span>
-        <button onclick="stratoChangeQty(1)">+</button>
+      <div class="lightbox__info-top">
+        <div class="product-card__cat" id="lbCat"></div>
+        <h3 class="product-card__title" style="font-size:1.5rem" id="lbTitle"></h3>
+        <p class="product-card__price" id="lbPrice" style="font-size:1.2rem;margin-bottom:0;"></p>
       </div>
-      <button class="btn btn-primary btn-block" onclick="stratoAddCurrentToCart()">Agregar al carrito</button>
+      <div class="lightbox__desc-wrap" id="lbDescWrap">
+        <div id="lbDesc"></div>
+        <button type="button" class="lightbox__desc-toggle" id="lbDescToggle" onclick="stratoToggleLightboxDesc()" style="display:none;">Ver más</button>
+      </div>
+      <div class="lightbox__info-bottom">
+        <p class="muted" id="lbMaterial" style="font-size:0.8rem;"></p>
+        <div id="lbColors" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin:1rem 0;"></div>
+        <div class="lightbox__qty">
+          <button onclick="stratoChangeQty(-1)">–</button>
+          <span id="lbQty">1</span>
+          <button onclick="stratoChangeQty(1)">+</button>
+        </div>
+        <button class="btn btn-primary btn-block" onclick="stratoAddCurrentToCart()">Agregar al carrito</button>
+      </div>
     </div>
   </div>
 </div>
