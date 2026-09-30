@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STRATO — datos de catálogo
+   STORGE LAB — datos de catálogo
    Editá este archivo para cargar tus productos reales: nombre, categoría,
    precio, colores disponibles, descripción y fotos.
 
@@ -12,18 +12,18 @@
    ========================================================================== */
 
 const STRATO_CATEGORIES = [
-  { slug: "iluminacion", name: "Iluminación", short: "Lámparas y veladores" },
-  { slug: "decoracion", name: "Decoración", short: "Floreros y objetos" },
-  { slug: "organizacion", name: "Organización", short: "Bandejas y contenedores" },
-  { slug: "jardin", name: "Macetas y jardín", short: "Macetas e interior verde" },
-  { slug: "personalizados", name: "Personalizados", short: "A pedido, con tu diseño" },
+  { slug: "iluminacion", name: "Iluminación", short: "Lámparas y veladores", image: null },
+  { slug: "decoracion", name: "Decoración", short: "Floreros y objetos", image: null },
+  { slug: "organizacion", name: "Organización", short: "Bandejas y contenedores", image: null },
+  { slug: "jardin", name: "Macetas y jardín", short: "Macetas e interior verde", image: null },
+  { slug: "personalizados", name: "Personalizados", short: "A pedido, con tu diseño", image: null },
 ];
 
 const STRATO_PRODUCTS = [
   {
     id: "lamp-onda",
     name: "Lámpara Onda",
-    category: "iluminacion",
+    categories: ["iluminacion"],
     price: 1890,
     colors: ["Crudo", "Terracota", "Grafito"],
     material: "PLA multicolor",
@@ -33,9 +33,9 @@ const STRATO_PRODUCTS = [
     images: [],
   },
   {
-    id: "velador-strato",
-    name: "Velador Strato",
-    category: "iluminacion",
+    id: "velador-storge",
+    name: "Velador Storge",
+    categories: ["iluminacion"],
     price: 1450,
     colors: ["Crudo", "Piedra"],
     material: "PLA",
@@ -46,7 +46,7 @@ const STRATO_PRODUCTS = [
   {
     id: "aplique-capas",
     name: "Aplique Capas",
-    category: "iluminacion",
+    categories: ["iluminacion"],
     price: 2200,
     colors: ["Terracota", "Grafito"],
     material: "PLA multicolor",
@@ -57,7 +57,7 @@ const STRATO_PRODUCTS = [
   {
     id: "florero-degrade",
     name: "Florero Degradé",
-    category: "decoracion",
+    categories: ["decoracion"],
     price: 990,
     colors: ["Terracota/Crudo", "Salvia/Crudo"],
     material: "PLA reciclado",
@@ -69,7 +69,7 @@ const STRATO_PRODUCTS = [
   {
     id: "centro-mesa-terrazas",
     name: "Centro de Mesa Terrazas",
-    category: "decoracion",
+    categories: ["decoracion"],
     price: 1350,
     colors: ["Crudo", "Piedra"],
     material: "PLA",
@@ -79,7 +79,7 @@ const STRATO_PRODUCTS = [
   {
     id: "portarretrato-lineas",
     name: "Portarretrato Líneas",
-    category: "decoracion",
+    categories: ["decoracion"],
     price: 590,
     colors: ["Crudo", "Grafito", "Terracota"],
     material: "PLA",
@@ -89,7 +89,7 @@ const STRATO_PRODUCTS = [
   {
     id: "florero-organza",
     name: "Florero Organza",
-    category: "decoracion",
+    categories: ["decoracion"],
     price: 1190,
     colors: ["Traslúcido", "Crudo"],
     material: "PLA silk",
@@ -99,7 +99,7 @@ const STRATO_PRODUCTS = [
   {
     id: "bandeja-modular",
     name: "Bandeja Modular",
-    category: "organizacion",
+    categories: ["organizacion"],
     price: 780,
     colors: ["Crudo", "Piedra", "Grafito"],
     material: "PLA",
@@ -109,7 +109,7 @@ const STRATO_PRODUCTS = [
   {
     id: "organizador-escritorio",
     name: "Organizador de Escritorio",
-    category: "organizacion",
+    categories: ["organizacion"],
     price: 1050,
     colors: ["Grafito", "Crudo"],
     material: "PLA",
@@ -120,7 +120,7 @@ const STRATO_PRODUCTS = [
   {
     id: "frutero-capas",
     name: "Frutero Capas",
-    category: "organizacion",
+    categories: ["organizacion"],
     price: 1290,
     colors: ["Terracota", "Crudo"],
     material: "PLA multicolor",
@@ -130,7 +130,7 @@ const STRATO_PRODUCTS = [
   {
     id: "maceta-terraza",
     name: "Maceta Terraza",
-    category: "jardin",
+    categories: ["jardin"],
     price: 690,
     colors: ["Terracota", "Salvia", "Crudo"],
     material: "PLA reciclado",
@@ -141,7 +141,7 @@ const STRATO_PRODUCTS = [
   {
     id: "macetero-colgante",
     name: "Macetero Colgante",
-    category: "jardin",
+    categories: ["jardin"],
     price: 590,
     colors: ["Crudo", "Piedra"],
     material: "PLA",
@@ -151,7 +151,7 @@ const STRATO_PRODUCTS = [
   {
     id: "set-suculentas",
     name: "Set Suculentas x3",
-    category: "jardin",
+    categories: ["jardin"],
     price: 990,
     colors: ["Mix Tierra"],
     material: "PLA multicolor",
@@ -161,7 +161,7 @@ const STRATO_PRODUCTS = [
   {
     id: "pieza-personalizada",
     name: "Pieza a Medida",
-    category: "personalizados",
+    categories: ["personalizados"],
     price: null,
     priceLabel: "Cotizar",
     colors: ["A elección"],
@@ -173,7 +173,7 @@ const STRATO_PRODUCTS = [
   {
     id: "topper-torta",
     name: "Topper Personalizado",
-    category: "personalizados",
+    categories: ["personalizados"],
     price: null,
     priceLabel: "Cotizar",
     colors: ["A elección"],
@@ -184,7 +184,7 @@ const STRATO_PRODUCTS = [
   {
     id: "placa-nombre",
     name: "Placa Nombre para Puerta",
-    category: "personalizados",
+    categories: ["personalizados"],
     price: null,
     priceLabel: "Cotizar",
     colors: ["A elección"],

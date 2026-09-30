@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STRATO — cliente de Supabase
+   STORGE LAB — cliente de Supabase
    Mismo enfoque que RGOL: un cliente inicializado acá, con la URL y la
    "anon/publishable key" del proyecto (es pública a propósito — la protección
    real está en las políticas de RLS del lado de la base, no en ocultar esta
@@ -44,7 +44,9 @@ async function stratoLoadLiveCatalog() {
       stratoSb.from("categorias").select("*").order("orden", { ascending: true }),
       stratoSb
         .from("productos")
-        .select("*, categorias(slug)")
+        // producto_categorias es la tabla puente: un producto puede estar en
+        // más de una categoría, por eso ya no se usa categoria_id directo.
+        .select("*, producto_categorias(categorias(slug))")
         .eq("activo", true)
         .order("orden", { ascending: true }),
     ]);
@@ -55,7 +57,12 @@ async function stratoLoadLiveCatalog() {
     }
 
     if (categorias && categorias.length) {
-      const mapped = categorias.map((c) => ({ slug: c.slug, name: c.nombre, short: c.descripcion_corta || "" }));
+      const mapped = categorias.map((c) => ({
+        slug: c.slug,
+        name: c.nombre,
+        short: c.descripcion_corta || "",
+        image: c.imagen_portada || null,
+      }));
       STRATO_CATEGORIES.length = 0;
       STRATO_CATEGORIES.push(...mapped);
     }
@@ -64,7 +71,7 @@ async function stratoLoadLiveCatalog() {
       const mapped = productos.map((p) => ({
         id: p.id,
         name: p.nombre,
-        category: p.categorias ? p.categorias.slug : null,
+        categories: (p.producto_categorias || []).map((pc) => pc.categorias && pc.categorias.slug).filter(Boolean),
         price: p.precio,
         priceLabel: p.precio == null ? "Cotizar" : undefined,
         colors: p.colores || [],

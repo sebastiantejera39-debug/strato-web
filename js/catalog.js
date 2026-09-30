@@ -7,6 +7,17 @@ function stratoCategoryName(slug) {
   return cat ? cat.name : "";
 }
 
+/* Un producto puede estar en más de una categoría (producto_categorias es
+   una relación muchos-a-muchos) — esto arma el texto "Decoración · Jardín"
+   que se muestra en la tarjeta y en el lightbox. */
+function stratoCategoryNames(product) {
+  const cats = (product && product.categories) || [];
+  return cats
+    .map((slug) => stratoCategoryName(slug))
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /* ---- Galería de fotos: cuando el producto tiene más de una imagen, se
    pueden pasar con flechas o puntitos, tanto en la tarjeta del catálogo
    como en el lightbox de "ver producto". data-product-id identifica el
@@ -85,7 +96,7 @@ function stratoProductCard(product, index) {
     "</div>" +
     '<div class="product-card__body">' +
     '<div class="product-card__cat">' +
-    stratoCategoryName(product.category) +
+    stratoCategoryNames(product) +
     "</div>" +
     '<h3 class="product-card__title">' +
     product.name +
@@ -138,31 +149,77 @@ function stratoRenderCategoryNav() {
   }
 }
 
-/* ---- Catálogo con filtro por categoría ---- */
+/* ---- Carrusel de categorías del home: lee STRATO_CATEGORIES (la lista
+   real, con foto de portada si el admin le cargó una) y arma una tira que
+   se desplaza sola en loop infinito. La lista se duplica una vez para que
+   el salto de "vuelta al principio" sea invisible (CSS anima -50% de un
+   track que mide el doble del ancho real). ---- */
+function stratoRenderCategoryCarousel() {
+  const track = document.getElementById("categoryCarouselTrack");
+  if (!track || !STRATO_CATEGORIES.length) return;
+
+  const cardHtml = (c, i) => {
+    const style = c.image ? ' style="background-image:url(&quot;' + c.image + '&quot;)"' : "";
+    const cls = "category-card" + (c.image ? "" : " category-card--g" + (i % 5));
+    return (
+      '<a class="' + cls + '" href="catalogo.html?cat=' + c.slug + '"' + style + ">" +
+      '<span class="category-card__label">' + c.name + (c.short ? "<span>" + c.short + "</span>" : "") + "</span>" +
+      "</a>"
+    );
+  };
+
+  const cards = STRATO_CATEGORIES.map(cardHtml);
+  track.innerHTML = cards.join("") + cards.join(""); // duplicado para el loop
+  // Velocidad proporcional a la cantidad de categorías: parejo con 5 o con 15.
+  track.style.animationDuration = Math.max(STRATO_CATEGORIES.length * 4, 14) + "s";
+}
+
+/* ---- Catálogo con filtro por categoría (multiselección: se puede elegir
+   más de una a la vez y se ve la unión de ambas — un producto que ya
+   pertenece a varias categorías aparece si CUALQUIERA de ellas está
+   marcada). El set vacío equivale a "Todos". La selección se refleja en
+   la URL como ?cat=a,b para poder compartir/recargar el filtro. ---- */
 function stratoInitCatalog() {
   const grid = document.getElementById("productGrid");
   if (!grid) return;
 
   const params = new URLSearchParams(window.location.search);
-  let activeCat = params.get("cat") || "todos";
+  const initial = (params.get("cat") || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s && s !== "todos");
+  const activeCats = new Set(initial);
+
+  function syncUrl() {
+    const url = new URL(window.location);
+    if (activeCats.size) url.searchParams.set("cat", Array.from(activeCats).join(","));
+    else url.searchParams.delete("cat");
+    window.history.replaceState({}, "", url);
+  }
 
   function apply() {
-    const list = activeCat === "todos" ? STRATO_PRODUCTS : STRATO_PRODUCTS.filter((p) => p.category === activeCat);
+    const list = !activeCats.size
+      ? STRATO_PRODUCTS
+      : STRATO_PRODUCTS.filter((p) => (p.categories || []).some((c) => activeCats.has(c)));
     stratoRenderGrid("productGrid", list);
     const countEl = document.getElementById("filterCount");
     if (countEl) countEl.textContent = list.length + (list.length === 1 ? " producto" : " productos");
     document.querySelectorAll(".filter-tabs button").forEach((b) => {
-      b.classList.toggle("active", b.dataset.cat === activeCat);
+      const isTodos = b.dataset.cat === "todos";
+      b.classList.toggle("active", isTodos ? !activeCats.size : activeCats.has(b.dataset.cat));
     });
   }
 
   document.querySelectorAll(".filter-tabs button").forEach((btn) => {
     btn.addEventListener("click", () => {
-      activeCat = btn.dataset.cat;
-      const url = new URL(window.location);
-      if (activeCat === "todos") url.searchParams.delete("cat");
-      else url.searchParams.set("cat", activeCat);
-      window.history.replaceState({}, "", url);
+      if (btn.dataset.cat === "todos") {
+        activeCats.clear();
+      } else if (activeCats.has(btn.dataset.cat)) {
+        activeCats.delete(btn.dataset.cat);
+      } else {
+        activeCats.add(btn.dataset.cat);
+      }
+      syncUrl();
       apply();
     });
   });
@@ -192,10 +249,13 @@ function stratoOpenProduct(id) {
   stratoCurrentProduct = product;
 
   document.getElementById("lbMedia").innerHTML = stratoGalleryHtml(product);
-  document.getElementById("lbCat").textContent = stratoCategoryName(product.category);
+  document.getElementById("lbCat").textContent = stratoCategoryNames(product);
   document.getElementById("lbTitle").textContent = product.name;
   document.getElementById("lbPrice").textContent = stratoFormatPrice(product);
-  document.getElementById("lbDesc").textContent = product.description;
+  // La descripción se carga desde el editor con formato del admin (negrita,
+  // cursiva, subrayado, saltos de línea) y ya viene sanitizada al guardarse
+  // allá — por eso innerHTML acá, y no textContent.
+  document.getElementById("lbDesc").innerHTML = product.description || "";
   document.getElementById("lbMaterial").textContent = "Material: " + product.material;
 
   const colorWrap = document.getElementById("lbColors");
@@ -252,6 +312,7 @@ function stratoAddCurrentToCart() {
 /* Llamado desde main.js una vez que el catálogo (estático o en vivo) está listo. */
 function stratoInitProductUI() {
   stratoRenderCategoryNav();
+  stratoRenderCategoryCarousel();
   stratoInitGalleries();
   stratoInitCatalog();
   stratoInitFeatured();

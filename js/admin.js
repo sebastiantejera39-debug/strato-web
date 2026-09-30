@@ -29,6 +29,8 @@
   let editingCategoriaId = null;
   let prodImagenes = []; // strings (url) o {uploading:true, tempId, name}
   let prodColores = [];
+  let prodCategoriaIds = []; // ids de categorías elegidas para el producto en edición (muchos-a-muchos)
+  let catImagenPortada = null; // url de la foto de portada de la categoría en edición, o null
 
   /* ---------- Helpers ---------- */
   function todayStr() {
@@ -100,6 +102,7 @@
     renderPedidos();
     renderProductos();
     renderCategorias();
+    renderCatImgManager(false);
     renderMaquinas();
     fillMaquinaSelect();
     renderCotizaciones();
@@ -157,11 +160,24 @@
   }
 
   async function loadProductos() {
+    // producto_categorias es la tabla puente: un producto puede tener
+    // varias categorías (muchos-a-muchos), por eso ya no se usa el viejo
+    // categoria_id directo.
     const { data, error } = await stratoSb
       .from("productos")
-      .select("*, categorias(id, nombre, slug)")
+      .select("*, producto_categorias(categoria_id, categorias(id, nombre, slug))")
       .order("orden", { ascending: true });
     if (!error) productosCache = data || [];
+  }
+
+  function productoCategoriaIds(p) {
+    return (p.producto_categorias || []).map((pc) => pc.categoria_id);
+  }
+  function productoCategoriaNombres(p) {
+    return (p.producto_categorias || [])
+      .map((pc) => pc.categorias && escHtml(pc.categorias.nombre))
+      .filter(Boolean)
+      .join(" · ");
   }
 
   async function loadPedidos() {
@@ -178,14 +194,42 @@
   }
 
   function fillCategoriaSelects() {
-    const opts = categoriasCache.map((c) => '<option value="' + c.id + '">' + escHtml(c.nombre) + "</option>").join("");
-    document.getElementById("prod-categoria").innerHTML = opts || '<option value="">Creá una categoría primero</option>';
-
     const filtro = document.getElementById("productos-filtro-categoria");
     filtro.innerHTML =
       '<option value="todas">Todas las categorías</option>' +
       categoriasCache.map((c) => '<option value="' + c.id + '">' + escHtml(c.nombre) + "</option>").join("");
+    renderProdCategoriasCheck();
   }
+
+  /* ---- Categorías del producto (checkboxes, muchos-a-muchos) ---- */
+  function renderProdCategoriasCheck() {
+    const wrap = document.getElementById("prod-categorias-check");
+    if (!categoriasCache.length) {
+      wrap.innerHTML = '<p class="muted" style="font-size:12px;">Creá una categoría primero (pestaña Categorías).</p>';
+      return;
+    }
+    wrap.innerHTML = categoriasCache
+      .map(
+        (c) =>
+          '<label class="cat-check"><input type="checkbox" value="' +
+          c.id +
+          '"' +
+          (prodCategoriaIds.includes(c.id) ? " checked" : "") +
+          ' onchange="stratoAdminToggleProdCategoria(\'' +
+          c.id +
+          "', this.checked)\"> " +
+          escHtml(c.nombre) +
+          "</label>"
+      )
+      .join("");
+  }
+  window.stratoAdminToggleProdCategoria = function (id, checked) {
+    if (checked) {
+      if (!prodCategoriaIds.includes(id)) prodCategoriaIds.push(id);
+    } else {
+      prodCategoriaIds = prodCategoriaIds.filter((x) => x !== id);
+    }
+  };
 
   /* ============ DASHBOARD ============ */
   document.getElementById("dash-filtrar").addEventListener("click", renderDashboard);
@@ -373,7 +417,7 @@
     const catFiltro = document.getElementById("productos-filtro-categoria").value;
 
     let list = productosCache;
-    if (catFiltro !== "todas") list = list.filter((p) => p.categoria_id === catFiltro);
+    if (catFiltro !== "todas") list = list.filter((p) => productoCategoriaIds(p).includes(catFiltro));
     if (term) list = list.filter((p) => p.nombre.toLowerCase().includes(term));
 
     const tbody = document.getElementById("productos-tbody");
@@ -388,7 +432,7 @@
           "</td><td>" +
           escHtml(p.nombre) +
           "</td><td>" +
-          escHtml(p.categorias ? p.categorias.nombre : "—") +
+          (productoCategoriaNombres(p) || "—") +
           "</td><td>" +
           (p.precio == null ? "Cotizar" : fmtMoney(p.precio)) +
           "</td><td>" +
@@ -428,18 +472,19 @@
     editingProductId = id;
     document.getElementById("producto-form-title").textContent = "Editar producto";
     document.getElementById("prod-nombre").value = p.nombre;
-    document.getElementById("prod-categoria").value = p.categoria_id || "";
     document.getElementById("prod-precio").value = p.precio == null ? "" : p.precio;
     document.getElementById("prod-cotizar").checked = p.precio == null;
     document.getElementById("prod-material").value = p.material || "";
-    document.getElementById("prod-descripcion").value = p.descripcion || "";
+    rteLoadContent(document.getElementById("prod-descripcion"), p.descripcion || "");
     document.getElementById("prod-tag").value = p.tag || "";
     document.getElementById("prod-orden").value = p.orden || 0;
     document.getElementById("prod-activo").checked = p.activo;
     prodColores = (p.colores || []).slice();
     prodImagenes = (p.imagenes || []).slice();
+    prodCategoriaIds = productoCategoriaIds(p);
     renderColorTags();
     renderImgManager();
+    renderProdCategoriasCheck();
     document.getElementById("prod-cancel-btn").style.display = "inline-block";
     document.getElementById("prod-submit-btn").textContent = "Guardar cambios";
     if (!document.getElementById("producto-form-body").classList.contains("open")) {
@@ -453,14 +498,17 @@
   function resetProductForm() {
     editingProductId = null;
     document.getElementById("form-producto").reset();
+    document.getElementById("prod-descripcion").innerHTML = "";
     document.getElementById("producto-form-title").textContent = "Nuevo producto";
     document.getElementById("prod-submit-btn").textContent = "Guardar producto";
     document.getElementById("prod-cancel-btn").style.display = "none";
     document.getElementById("prod-activo").checked = true;
     prodColores = [];
     prodImagenes = [];
+    prodCategoriaIds = [];
     renderColorTags();
     renderImgManager();
+    renderProdCategoriasCheck();
   }
 
   /* ---- Colores (chips) ---- */
@@ -491,11 +539,15 @@
   };
 
   /* ---- Imágenes (Supabase Storage) ---- */
+  // Cada foto pasa primero por el recortador: así se elige qué parte de la
+  // imagen mostrar en vez de subir siempre la foto entera. Se procesan de a
+  // una (si se eligieron varias juntas) para no abrir varios modales a la vez.
   document.getElementById("prod-img-input").addEventListener("change", async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     for (const file of files) {
-      await uploadImagen(file);
+      const blob = await stratoOpenCropper(file);
+      if (blob) await uploadImagen(blob);
     }
   });
 
@@ -523,16 +575,15 @@
     renderImgManager();
   };
 
-  async function uploadImagen(file) {
+  async function uploadImagen(blob) {
     if (!requireSb()) return;
-    const tempEntry = { uploading: true, name: file.name };
+    const tempEntry = { uploading: true, name: "foto" };
     prodImagenes.push(tempEntry);
     renderImgManager();
 
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-    const path = "producto-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "." + ext;
-
-    const { error } = await stratoSb.storage.from("productos-imagenes").upload(path, file);
+    // El recortador siempre entrega un jpeg (ver stratoOpenCropper).
+    const path = "producto-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".jpg";
+    const { error } = await stratoSb.storage.from("productos-imagenes").upload(path, blob, { contentType: "image/jpeg" });
     const idx = prodImagenes.indexOf(tempEntry);
     if (error) {
       if (idx > -1) prodImagenes.splice(idx, 1);
@@ -545,6 +596,244 @@
     renderImgManager();
   }
 
+  /* ---- Recortador de foto (canvas), reutilizado para fotos de producto y
+     portada de categoría. Devuelve una Promise que resuelve con el Blob
+     recortado (cuadrado, jpeg) o null si se canceló. ---- */
+  function stratoOpenCropper(file) {
+    return new Promise((resolve) => {
+      const modal = document.getElementById("crop-modal");
+      const stage = document.getElementById("crop-stage");
+      const imgEl = document.getElementById("crop-img");
+      const boxEl = document.getElementById("crop-box");
+      const handleEl = document.getElementById("crop-handle");
+      const confirmBtn = document.getElementById("crop-confirm-btn");
+      const cancelBtn = document.getElementById("crop-cancel-btn");
+      const MIN_SIZE = 40;
+      const MAX_OUTPUT = 1200;
+
+      let box = { left: 0, top: 0, size: 0 };
+      let stageW = 0;
+      let stageH = 0;
+
+      function paintBox() {
+        boxEl.style.left = box.left + "px";
+        boxEl.style.top = box.top + "px";
+        boxEl.style.width = box.size + "px";
+        boxEl.style.height = box.size + "px";
+      }
+
+      function onImgLoad() {
+        // Se espera un frame para que el navegador termine de acomodar el
+        // tamaño renderizado de la imagen (max-width/max-height) antes de medirlo.
+        requestAnimationFrame(() => {
+          stageW = stage.clientWidth;
+          stageH = stage.clientHeight;
+          const size0 = Math.min(stageW, stageH);
+          box = { left: (stageW - size0) / 2, top: (stageH - size0) / 2, size: size0 };
+          paintBox();
+        });
+      }
+      imgEl.addEventListener("load", onImgLoad, { once: true });
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        imgEl.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+
+      modal.classList.add("open");
+
+      function clamp(v, lo, hi) {
+        return Math.min(Math.max(v, lo), hi);
+      }
+
+      function startDrag(e, mode) {
+        e.preventDefault();
+        const start = { x: e.clientX, y: e.clientY, left: box.left, top: box.top, size: box.size };
+        function move(ev) {
+          const dx = ev.clientX - start.x;
+          const dy = ev.clientY - start.y;
+          if (mode === "move") {
+            box.left = clamp(start.left + dx, 0, stageW - box.size);
+            box.top = clamp(start.top + dy, 0, stageH - box.size);
+          } else {
+            const delta = (dx + dy) / 2;
+            const maxSize = Math.min(stageW - start.left, stageH - start.top);
+            box.size = clamp(start.size + delta, MIN_SIZE, maxSize);
+          }
+          paintBox();
+        }
+        function up() {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+        }
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up, { once: true });
+      }
+
+      function onBoxDown(e) {
+        if (e.target === handleEl) return; // el handle maneja su propio drag (resize)
+        startDrag(e, "move");
+      }
+      function onHandleDown(e) {
+        e.stopPropagation();
+        startDrag(e, "resize");
+      }
+
+      boxEl.addEventListener("pointerdown", onBoxDown);
+      handleEl.addEventListener("pointerdown", onHandleDown);
+
+      function cleanup() {
+        modal.classList.remove("open");
+        boxEl.removeEventListener("pointerdown", onBoxDown);
+        handleEl.removeEventListener("pointerdown", onHandleDown);
+        confirmBtn.removeEventListener("click", onConfirm);
+        cancelBtn.removeEventListener("click", onCancel);
+        imgEl.src = "";
+      }
+
+      function onConfirm() {
+        const scale = imgEl.naturalWidth / stageW;
+        const sx = box.left * scale;
+        const sy = box.top * scale;
+        const ssize = box.size * scale;
+        const outSize = Math.min(Math.round(ssize) || MIN_SIZE, MAX_OUTPUT);
+        const canvas = document.createElement("canvas");
+        canvas.width = outSize;
+        canvas.height = outSize;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(imgEl, sx, sy, ssize, ssize, 0, 0, outSize, outSize);
+        canvas.toBlob(
+          (blob) => {
+            cleanup();
+            resolve(blob);
+          },
+          "image/jpeg",
+          0.88
+        );
+      }
+      function onCancel() {
+        cleanup();
+        resolve(null);
+      }
+
+      confirmBtn.addEventListener("click", onConfirm);
+      cancelBtn.addEventListener("click", onCancel);
+    });
+  }
+
+  /* ---- Descripción con formato (negrita / cursiva / subrayado) ----
+     contenteditable + document.execCommand: liviano, sin librerías, y
+     alcanza para lo que pide el panel. Se sanitiza el HTML antes de
+     guardarlo (por si se pega texto con estilos pegados de Word/Docs). */
+  const RTE_ALLOWED_TAGS = new Set(["B", "STRONG", "I", "EM", "U", "BR", "DIV", "P", "SPAN"]);
+  function sanitizeRte(html) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    (function clean(node) {
+      Array.from(node.childNodes).forEach((child) => {
+        if (child.nodeType === 1) {
+          if (!RTE_ALLOWED_TAGS.has(child.tagName)) {
+            while (child.firstChild) node.insertBefore(child.firstChild, child);
+            node.removeChild(child);
+            return;
+          }
+          Array.from(child.attributes).forEach((attr) => child.removeAttribute(attr.name));
+          clean(child);
+        } else if (child.nodeType !== 3) {
+          node.removeChild(child);
+        }
+      });
+    })(tmp);
+    return tmp.innerHTML;
+  }
+  function rteLoadContent(editorEl, raw) {
+    const text = raw || "";
+    if (/<[a-z][\s\S]*>/i.test(text)) {
+      editorEl.innerHTML = sanitizeRte(text);
+    } else {
+      // Descripción vieja guardada como texto plano: se escapa y se
+      // convierten los \n en <br> para no perder los saltos de línea.
+      const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      editorEl.innerHTML = esc.replace(/\n/g, "<br>");
+    }
+  }
+  try {
+    document.execCommand("defaultParagraphSeparator", false, "br");
+  } catch (e) {
+    /* navegadores viejos: sigue funcionando, solo cambia qué tag usa al tocar Enter */
+  }
+  document.querySelectorAll(".rte-toolbar button[data-cmd]").forEach((btn) => {
+    btn.addEventListener("mousedown", (e) => e.preventDefault()); // no perder la selección de texto
+    btn.addEventListener("click", () => {
+      document.execCommand(btn.dataset.cmd, false, null);
+      document.getElementById("prod-descripcion").focus();
+      updateRteToolbarState();
+    });
+  });
+  function updateRteToolbarState() {
+    document.querySelectorAll(".rte-toolbar button[data-cmd]").forEach((btn) => {
+      let active = false;
+      try {
+        active = document.queryCommandState(btn.dataset.cmd);
+      } catch (e) {
+        /* ignorar */
+      }
+      btn.classList.toggle("active", active);
+    });
+  }
+  const prodDescEl = document.getElementById("prod-descripcion");
+  prodDescEl.addEventListener("keyup", updateRteToolbarState);
+  prodDescEl.addEventListener("mouseup", updateRteToolbarState);
+
+  /* ---- Foto de portada de categoría ---- */
+  document.getElementById("cat-img-input").addEventListener("change", async (e) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!file) return;
+    const blob = await stratoOpenCropper(file);
+    if (blob) await uploadCategoriaImagen(blob);
+  });
+
+  async function uploadCategoriaImagen(blob) {
+    if (!requireSb()) return;
+    renderCatImgManager(true);
+    const path = "categoria-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".jpg";
+    const { error } = await stratoSb.storage.from("productos-imagenes").upload(path, blob, { contentType: "image/jpeg" });
+    if (error) {
+      alert("No se pudo subir la imagen: " + error.message);
+      renderCatImgManager(false);
+      return;
+    }
+    const { data } = stratoSb.storage.from("productos-imagenes").getPublicUrl(path);
+    catImagenPortada = data.publicUrl;
+    renderCatImgManager(false);
+  }
+
+  function renderCatImgManager(uploading) {
+    const wrap = document.getElementById("cat-img-manager");
+    if (uploading) {
+      wrap.innerHTML = '<div class="img-thumb img-uploading">Subiendo…</div>';
+      return;
+    }
+    let html = "";
+    if (catImagenPortada) {
+      html +=
+        '<div class="img-thumb"><img src="' +
+        catImagenPortada +
+        '"><button type="button" class="img-remove" onclick="stratoAdminQuitarImagenCategoria()">✕</button></div>';
+    }
+    html +=
+      '<div class="img-add-tile" onclick="document.getElementById(\'cat-img-input\').click()">' +
+      (catImagenPortada ? "↻" : "+") +
+      "</div>";
+    wrap.innerHTML = html;
+  }
+  window.stratoAdminQuitarImagenCategoria = function () {
+    catImagenPortada = null;
+    renderCatImgManager(false);
+  };
+
   /* ---- Guardar producto ---- */
   document.getElementById("form-producto").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -556,11 +845,10 @@
 
     const payload = {
       nombre: document.getElementById("prod-nombre").value.trim(),
-      categoria_id: document.getElementById("prod-categoria").value || null,
       precio: cotizar || precioVal === "" ? null : Number(precioVal),
       colores: prodColores,
       material: document.getElementById("prod-material").value.trim(),
-      descripcion: document.getElementById("prod-descripcion").value.trim(),
+      descripcion: sanitizeRte(document.getElementById("prod-descripcion").innerHTML),
       imagenes: prodImagenes.filter((i) => typeof i === "string"),
       tag: document.getElementById("prod-tag").value || null,
       orden: Number(document.getElementById("prod-orden").value || 0),
@@ -568,20 +856,37 @@
     };
 
     if (!payload.nombre) { errEl.textContent = "Falta el nombre."; return; }
-    if (!payload.categoria_id) { errEl.textContent = "Elegí una categoría (creá una primero si no hay ninguna)."; return; }
+    if (!prodCategoriaIds.length) { errEl.textContent = "Elegí al menos una categoría (creá una primero si no hay ninguna)."; return; }
 
-    let error;
+    let error, productoId;
     if (editingProductId) {
+      productoId = editingProductId;
       ({ error } = await stratoSb.from("productos").update(payload).eq("id", editingProductId));
     } else {
-      ({ error } = await stratoSb.from("productos").insert([payload]));
+      let data;
+      ({ data, error } = await stratoSb.from("productos").insert([payload]).select());
+      if (!error && data && data[0]) productoId = data[0].id;
     }
     if (error) { errEl.textContent = error.message; return; }
+
+    if (productoId) {
+      const { error: catError } = await syncProductoCategorias(productoId, prodCategoriaIds);
+      if (catError) { errEl.textContent = "Producto guardado, pero falló vincular categorías: " + catError.message; return; }
+    }
 
     await loadProductos();
     renderProductos();
     resetProductForm();
   });
+
+  /* Reemplaza los vínculos producto-categoría por la lista actual (borra e inserta de nuevo). */
+  async function syncProductoCategorias(productoId, categoriaIds) {
+    const del = await stratoSb.from("producto_categorias").delete().eq("producto_id", productoId);
+    if (del.error) return del;
+    if (!categoriaIds.length) return { error: null };
+    const rows = categoriaIds.map((catId) => ({ producto_id: productoId, categoria_id: catId }));
+    return await stratoSb.from("producto_categorias").insert(rows);
+  }
 
   /* ============ CATEGORIAS ============ */
   document.getElementById("cat-cancel-btn").addEventListener("click", resetCategoriaForm);
@@ -591,6 +896,8 @@
     document.getElementById("form-categoria").reset();
     document.getElementById("cat-submit-btn").textContent = "Guardar categoría";
     document.getElementById("cat-cancel-btn").style.display = "none";
+    catImagenPortada = null;
+    renderCatImgManager(false);
   }
 
   function renderCategorias() {
@@ -624,6 +931,8 @@
     document.getElementById("cat-nombre").value = c.nombre;
     document.getElementById("cat-orden").value = c.orden;
     document.getElementById("cat-descripcion").value = c.descripcion_corta || "";
+    catImagenPortada = c.imagen_portada || null;
+    renderCatImgManager(false);
     document.getElementById("cat-submit-btn").textContent = "Guardar cambios";
     document.getElementById("cat-cancel-btn").style.display = "inline-block";
     document.getElementById("panel-categorias").scrollIntoView({ behavior: "smooth" });
@@ -648,6 +957,7 @@
       nombre: document.getElementById("cat-nombre").value.trim(),
       descripcion_corta: document.getElementById("cat-descripcion").value.trim(),
       orden: Number(document.getElementById("cat-orden").value || 0),
+      imagen_portada: catImagenPortada,
     };
     if (!payload.slug || !payload.nombre) { errEl.textContent = "Faltan datos."; return; }
 
