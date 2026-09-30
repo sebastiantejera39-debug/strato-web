@@ -627,10 +627,14 @@ input, textarea, select { font-family: inherit; }
 }
 /* white-space:pre-line es respaldo para descripciones viejas guardadas como
    texto plano con saltos de línea (\n); el editor nuevo ya guarda <br>/<div>
-   reales, que esta regla no afecta. Recortada por defecto a ~4 líneas. */
+   reales, que esta regla no afecta. Por defecto ocupa TODO el alto que le
+   deja disponible .lightbox__desc-wrap (ni más ni menos) — ya no se recorta
+   a una cantidad fija de líneas como antes. Si el texto entra en ese alto,
+   se ve completo y no aparece "Ver más"; si no entra, se recorta ahí mismo
+   con el degradado de abajo y aparece el botón para desplegarla. */
 #lbDesc {
   white-space: pre-line;
-  max-height: 4.8em;
+  flex: 1 1 auto; min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -641,8 +645,6 @@ input, textarea, select { font-family: inherit; }
   pointer-events: none;
 }
 #lbDesc.is-expanded {
-  flex: 1 1 auto; min-height: 0;
-  max-height: none;
   overflow-y: auto;
 }
 .lightbox__desc-toggle {
@@ -715,7 +717,12 @@ input, textarea, select { font-family: inherit; }
   }
   .lightbox__media { height: auto; aspect-ratio: 1/1; }
   .lightbox__info { height: auto; overflow: visible; }
+  /* En celular el cuadro entero ya se desplaza como una hoja (arriba), así
+     que acá la descripción vuelve a recortarse a un puñado de líneas fijas
+     en vez de "llenar el espacio disponible" (no tendría un alto acotado
+     del cual tomar ese espacio). */
   .lightbox__desc-wrap { flex: 0 0 auto; }
+  #lbDesc { flex: 0 0 auto; max-height: 4.8em; }
   #lbDesc.is-expanded { flex: 0 0 auto; max-height: none; overflow: visible; }
 }
 
