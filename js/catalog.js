@@ -259,25 +259,7 @@ function stratoOpenProduct(id) {
   stratoResetLightboxDesc();
   document.getElementById("lbMaterial").textContent = "Material: " + product.material;
 
-  const colorWrap = document.getElementById("lbColors");
-  colorWrap.innerHTML = "";
-  if (product.colors && product.colors.length) {
-    product.colors.forEach((c, i) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn btn-sm btn-ghost" + (i === 0 ? " active" : "");
-      btn.textContent = c;
-      btn.addEventListener("click", () => {
-        colorWrap.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        lightbox.dataset.color = c;
-      });
-      colorWrap.appendChild(btn);
-    });
-    lightbox.dataset.color = product.colors[0];
-  } else {
-    lightbox.dataset.color = "";
-  }
+  stratoRenderLightboxColors(product, lightbox);
 
   lightbox.dataset.qty = "1";
   document.getElementById("lbQty").textContent = "1";
@@ -285,6 +267,94 @@ function stratoOpenProduct(id) {
   lightbox.classList.add("open");
   document.body.style.overflow = "hidden";
 }
+
+/* ---- Selector de color del lightbox: la mayoría de los productos permite
+   un solo color (menú desplegable normal), pero un producto puede marcarse
+   en el admin para permitir elegir varios a la vez (desplegable con
+   casilleros). En ambos casos el resultado termina en lightbox.dataset.color
+   como un string plano — con varios colores marcados queda algo como
+   "Blanco, Negro" — así el carrito/checkout/WhatsApp no necesitan saber
+   nada de esto, ya tratan el color como texto. ---- */
+function stratoRenderLightboxColors(product, lightbox) {
+  const wrap = document.getElementById("lbColors");
+  wrap.innerHTML = "";
+  const colors = product.colors || [];
+  if (!colors.length) {
+    lightbox.dataset.color = "";
+    return;
+  }
+  if (product.colorsMultiple) {
+    stratoRenderColorMultiSelect(wrap, colors, lightbox);
+  } else {
+    stratoRenderColorDropdown(wrap, colors, lightbox);
+  }
+}
+
+function stratoRenderColorDropdown(wrap, colors, lightbox) {
+  const select = document.createElement("select");
+  select.className = "lightbox__color-select";
+  select.setAttribute("aria-label", "Color");
+  colors.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    select.appendChild(opt);
+  });
+  select.addEventListener("change", () => {
+    lightbox.dataset.color = select.value;
+  });
+  wrap.appendChild(select);
+  lightbox.dataset.color = colors[0];
+}
+
+function stratoRenderColorMultiSelect(wrap, colors, lightbox) {
+  const selected = new Set([colors[0]]);
+  const box = document.createElement("div");
+  box.className = "color-multiselect";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "color-multiselect__btn";
+  const panel = document.createElement("div");
+  panel.className = "color-multiselect__panel";
+
+  function syncLabel() {
+    btn.textContent = selected.size ? Array.from(selected).join(", ") : "Elegí uno o más colores";
+    lightbox.dataset.color = Array.from(selected).join(", ");
+  }
+
+  colors.forEach((c) => {
+    const row = document.createElement("label");
+    row.className = "color-multiselect__row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = selected.has(c);
+    cb.addEventListener("change", () => {
+      if (cb.checked) selected.add(c);
+      else selected.delete(c);
+      syncLabel();
+    });
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(" " + c));
+    panel.appendChild(row);
+  });
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    box.classList.toggle("open");
+  });
+
+  box.appendChild(btn);
+  box.appendChild(panel);
+  wrap.appendChild(box);
+  syncLabel();
+}
+
+// Un único listener delegado (no uno por lightbox abierto) que cierra el
+// desplegable de varios colores al tocar afuera.
+document.addEventListener("click", (e) => {
+  const openBox = document.querySelector(".color-multiselect.open");
+  if (openBox && !openBox.contains(e.target)) openBox.classList.remove("open");
+});
 
 /* ---- Descripción recortada con "Ver más" en el lightbox: por defecto se
    muestra recortada a pocas líneas; si el texto no entra ahí, aparece el

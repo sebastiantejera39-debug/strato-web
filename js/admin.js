@@ -475,6 +475,7 @@
     document.getElementById("prod-precio").value = p.precio == null ? "" : p.precio;
     document.getElementById("prod-cotizar").checked = p.precio == null;
     document.getElementById("prod-material").value = p.material || "";
+    document.getElementById("prod-colores-multiple").checked = !!p.colores_multiple;
     rteLoadContent(document.getElementById("prod-descripcion"), p.descripcion || "");
     document.getElementById("prod-tag").value = p.tag || "";
     document.getElementById("prod-orden").value = p.orden || 0;
@@ -847,6 +848,7 @@
       nombre: document.getElementById("prod-nombre").value.trim(),
       precio: cotizar || precioVal === "" ? null : Number(precioVal),
       colores: prodColores,
+      colores_multiple: document.getElementById("prod-colores-multiple").checked,
       material: document.getElementById("prod-material").value.trim(),
       descripcion: sanitizeRte(document.getElementById("prod-descripcion").innerHTML),
       imagenes: prodImagenes.filter((i) => typeof i === "string"),

@@ -75,6 +75,7 @@ async function stratoLoadLiveCatalog() {
         price: p.precio,
         priceLabel: p.precio == null ? "Cotizar" : undefined,
         colors: p.colores || [],
+        colorsMultiple: !!p.colores_multiple,
         material: p.material || "",
         tag: p.tag || undefined,
         description: p.descripcion || "",
