@@ -11,6 +11,19 @@ const STRATO_INSTAGRAM = "storge.lab"; // TODO: usuario real de Instagram (ya co
 
 const CART_KEY = "strato_cart_v1";
 
+/* ---- Cupones de descuento ----
+   Todavía no hay ningún código cargado — esto deja lista la base (input +
+   cálculo + guardado) para cuando Sebastian quiera sumar cupones reales,
+   sin tener que tocar el HTML/CSS del carrito. Para sumar uno, agregar una
+   línea acá con el código en MAYÚSCULAS, por ejemplo:
+     "BIENVENIDA10": { tipo: "porcentaje", valor: 10 },  // 10% de descuento
+     "1000OFF":      { tipo: "monto", valor: 1000 },     // $U 1000 de descuento
+   Mientras este objeto esté vacío, cualquier código que se escriba va a
+   mostrar "cupón no válido" — es el comportamiento esperado por ahora. */
+const STRATO_CUPONES = {};
+
+const CUPON_KEY = "strato_cupon_v1";
+
 function stratoGetCart() {
   try {
     const raw = localStorage.getItem(CART_KEY);
@@ -74,7 +87,47 @@ function stratoSetLineNote(productId, color, note) {
 
 function stratoClearCart() {
   localStorage.removeItem(CART_KEY);
+  localStorage.removeItem(CUPON_KEY);
   stratoUpdateCartCount();
+}
+
+/* ---- Cupón aplicado (código guardado en localStorage) ---- */
+function stratoGetCuponCode() {
+  try {
+    return localStorage.getItem(CUPON_KEY) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function stratoCartDescuento() {
+  const code = stratoGetCuponCode();
+  const cupon = code ? STRATO_CUPONES[code] : null;
+  if (!cupon) return 0;
+  const subtotal = stratoCartSubtotal();
+  const monto = cupon.tipo === "porcentaje" ? subtotal * (cupon.valor / 100) : cupon.valor;
+  return Math.min(Math.max(monto, 0), subtotal);
+}
+
+function stratoCartTotal() {
+  return Math.max(0, stratoCartSubtotal() - stratoCartDescuento());
+}
+
+function stratoAplicarCupon(inputEl) {
+  const feedbackEl = document.getElementById("cartCuponFeedback");
+  const raw = (inputEl && inputEl.value ? inputEl.value : "").trim().toUpperCase();
+  if (!raw) return;
+  if (STRATO_CUPONES[raw]) {
+    localStorage.setItem(CUPON_KEY, raw);
+    stratoRenderCartDrawer();
+  } else if (feedbackEl) {
+    feedbackEl.textContent = "Ese cupón no es válido.";
+  }
+}
+
+function stratoQuitarCupon() {
+  localStorage.removeItem(CUPON_KEY);
+  stratoRenderCartDrawer();
 }
 
 function stratoCartDetailed() {
@@ -201,12 +254,39 @@ function stratoRenderCartDrawer() {
     .join("");
 
   const subtotal = stratoCartSubtotal();
+  const cuponCode = stratoGetCuponCode();
+  const cuponAplicado = cuponCode && STRATO_CUPONES[cuponCode];
+  const descuento = stratoCartDescuento();
+  const total = stratoCartTotal();
+
   if (footEl) {
+    const cuponHtml = cuponAplicado
+      ? '<div class="cart-cupon--applied">' +
+        "<span>Cupón <strong>" +
+        cuponCode +
+        "</strong> aplicado</span>" +
+        '<a onclick="stratoQuitarCupon()">Quitar</a>' +
+        "</div>"
+      : '<div class="cart-cupon">' +
+        '<input type="text" id="cartCuponInput" class="cart-cupon__input" placeholder="Código de descuento" maxlength="30" ' +
+        "onkeydown=\"if(event.key==='Enter'){event.preventDefault();stratoAplicarCupon(this);}\">" +
+        '<button type="button" class="btn btn-ghost btn-sm" onclick="stratoAplicarCupon(document.getElementById(\'cartCuponInput\'))">Aplicar</button>' +
+        "</div>" +
+        '<p id="cartCuponFeedback" class="cart-cupon__feedback"></p>';
+
+    let rowsHtml = '<div class="cart-drawer__row"><span>Subtotal</span><span>$U ' + subtotal.toLocaleString("es-UY") + "</span></div>";
+    if (descuento > 0) {
+      rowsHtml +=
+        '<div class="cart-drawer__row cart-drawer__row--descuento"><span>Descuento</span><span>-$U ' +
+        descuento.toLocaleString("es-UY") +
+        "</span></div>";
+    }
+    rowsHtml += '<div class="cart-drawer__row total"><span>Total</span><span>$U ' + total.toLocaleString("es-UY") + "</span></div>";
+
     footEl.innerHTML =
-      '<div class="cart-drawer__row total"><span>Subtotal</span><span>$U ' +
-      subtotal.toLocaleString("es-UY") +
-      "</span></div>" +
-      '<p class="muted" style="font-size:0.78rem;margin-bottom:1rem;">Los productos a cotizar se coordinan por WhatsApp. Envío no incluido.</p>' +
+      cuponHtml +
+      rowsHtml +
+      '<p class="muted" style="font-size:0.78rem;margin:0.75rem 0 1rem;">Los productos a cotizar se coordinan por WhatsApp. Envío no incluido.</p>' +
       '<a href="checkout.html" class="btn btn-primary btn-block">Finalizar pedido</a>';
   }
 }
