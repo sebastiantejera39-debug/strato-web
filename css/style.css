@@ -26,6 +26,7 @@
   --color-accent: #DAC7FF;
   --color-accent-dark: #B79EEF;
   --color-accent-tint: #F2ECFF;
+  --color-warning: #B3261E; /* único uso de rojo en el sitio: avisos de dinero (ej. recargo de Mercado Pago) */
   --color-onbordo-muted: rgba(255,255,255,0.68);
 
   /* Tipografía */
@@ -811,6 +812,38 @@ input, textarea, select { font-family: inherit; }
   .checkout-grid { grid-template-columns: 1fr; }
   .order-summary { position: static; }
   .form-grid { grid-template-columns: 1fr; }
+}
+
+.checkout-subhead {
+  font-family: var(--font-display); font-size: 0.78rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--color-stone); margin: var(--space-md) 0 var(--space-sm);
+  padding-top: var(--space-sm); border-top: 1px solid var(--color-line);
+}
+.checkout-subhead:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+
+/* ---------- Método de pago (checkout) ---------- */
+.payment-method__toggle { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
+.payment-method__btn {
+  display: block; width: 100%; padding: 0.9em 1em; border: 1px solid var(--color-line);
+  background: var(--color-paper); border-radius: var(--radius); font-size: 0.86rem;
+  font-family: var(--font-display); color: var(--color-ink); cursor: pointer; text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.payment-method__btn:hover { border-color: var(--color-accent-dark); }
+.payment-method__btn.active {
+  border-color: var(--color-charcoal); background: var(--color-accent-tint);
+}
+.payment-method__info {
+  margin-top: var(--space-sm); padding: var(--space-sm) var(--space-md);
+  background: var(--color-accent-tint); border-radius: var(--radius);
+  font-size: 0.82rem; color: var(--color-stone);
+}
+.payment-method__info p { margin: 0 0 0.4em; }
+.payment-method__info p:last-child { margin-bottom: 0; }
+.payment-method__warning { color: var(--color-warning); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .payment-method__toggle { grid-template-columns: 1fr; }
 }
 
 /* ---------- Banner de página interna ---------- */
