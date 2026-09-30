@@ -256,6 +256,7 @@ function stratoOpenProduct(id) {
   // cursiva, subrayado, saltos de línea) y ya viene sanitizada al guardarse
   // allá — por eso innerHTML acá, y no textContent.
   document.getElementById("lbDesc").innerHTML = product.description || "";
+  stratoResetLightboxDesc();
   document.getElementById("lbMaterial").textContent = "Material: " + product.material;
 
   const colorWrap = document.getElementById("lbColors");
@@ -283,6 +284,37 @@ function stratoOpenProduct(id) {
 
   lightbox.classList.add("open");
   document.body.style.overflow = "hidden";
+}
+
+/* ---- Descripción recortada con "Ver más" en el lightbox: por defecto se
+   muestra recortada a pocas líneas; si el texto no entra ahí, aparece el
+   botón para desplegarla. El resto de la info (título, precio, material,
+   colores, cantidad, botón) queda siempre fijo y visible — solo el texto de
+   la descripción se desplaza por dentro cuando está desplegada y no entra
+   en el alto disponible. ---- */
+function stratoResetLightboxDesc() {
+  const desc = document.getElementById("lbDesc");
+  const toggle = document.getElementById("lbDescToggle");
+  if (!desc || !toggle) return;
+  desc.classList.remove("is-expanded", "has-more");
+  toggle.textContent = "Ver más";
+  toggle.style.display = "none";
+  // Se mide en el próximo frame: recién ahí el navegador ya aplicó el
+  // recorte (max-height) y scrollHeight refleja el alto real del contenido.
+  requestAnimationFrame(() => {
+    if (desc.scrollHeight > desc.clientHeight + 2) {
+      desc.classList.add("has-more");
+      toggle.style.display = "inline-flex";
+    }
+  });
+}
+
+function stratoToggleLightboxDesc() {
+  const desc = document.getElementById("lbDesc");
+  const toggle = document.getElementById("lbDescToggle");
+  if (!desc || !toggle) return;
+  const expanded = desc.classList.toggle("is-expanded");
+  toggle.textContent = expanded ? "Ver menos" : "Ver más";
 }
 
 function stratoCloseProduct() {
