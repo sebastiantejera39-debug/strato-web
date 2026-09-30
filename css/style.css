@@ -333,14 +333,31 @@ input, textarea, select { font-family: inherit; }
 }
 .value-strip li::before { content: '◆'; font-size: 0.5rem; color: var(--color-charcoal); }
 
-/* ---------- Grid de categorías ---------- */
-.category-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+/* ---------- Carrusel de categorías (home) ----------
+   La tira (track) se arma en JS a partir de STRATO_CATEGORIES, duplicada
+   una vez, y se desplaza sola con esta animación en loop infinito; se
+   pausa al pasar el mouse para poder leer/clickear con comodidad. */
+.category-carousel {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+}
+.category-carousel__track {
+  display: flex;
   gap: var(--space-sm);
+  width: max-content;
+  animation-name: category-scroll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.category-carousel:hover .category-carousel__track { animation-play-state: paused; }
+@keyframes category-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
 }
 .category-card {
   position: relative;
+  flex: 0 0 260px;
   aspect-ratio: 3/4;
   border-radius: var(--radius);
   overflow: hidden;
@@ -348,6 +365,8 @@ input, textarea, select { font-family: inherit; }
   align-items: flex-end;
   padding: var(--space-sm);
   transition: transform var(--transition);
+  background-size: cover;
+  background-position: center;
 }
 .category-card:hover { transform: translateY(-4px); }
 .category-card__label {
@@ -371,8 +390,14 @@ input, textarea, select { font-family: inherit; }
   position: absolute; inset: 0;
   background: linear-gradient(180deg, rgba(53,10,6,0.05), rgba(53,10,6,0.68));
 }
+/* Degradés de respaldo para categorías sin foto de portada todavía */
+.category-card--g0 { background: linear-gradient(150deg,#3a332b,#6b4f3a); }
+.category-card--g1 { background: linear-gradient(150deg,#5c4736,#B5602F); }
+.category-card--g2 { background: linear-gradient(150deg,#453f34,#7a715f); }
+.category-card--g3 { background: linear-gradient(150deg,#3f4a3a,#6f8065); }
+.category-card--g4 { background: linear-gradient(150deg,#3a2f42,#7a5f8a); }
 @media (max-width: 900px) {
-  .category-grid { grid-template-columns: repeat(2, 1fr); }
+  .category-card { flex-basis: 210px; }
 }
 
 /* ---------- Grid de productos ---------- */
@@ -574,6 +599,10 @@ input, textarea, select { font-family: inherit; }
 .lightbox__media img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cart-item__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .lightbox__info { padding: var(--space-lg) var(--space-md); }
+/* white-space:pre-line es respaldo para descripciones viejas guardadas como
+   texto plano con saltos de línea (\n); el editor nuevo ya guarda <br>/<div>
+   reales, que esta regla no afecta. */
+#lbDesc { white-space: pre-line; }
 .lightbox__close {
   position: absolute; top: var(--space-sm); right: var(--space-sm); z-index: 2;
   background: var(--color-paper); border: 1px solid var(--color-line);
@@ -680,7 +709,7 @@ input, textarea, select { font-family: inherit; }
 
 /* ---------- Responsive extra ---------- */
 @media (max-width: 720px) {
-  .category-grid { grid-template-columns: 1fr 1fr; }
+  .category-card { flex-basis: 170px; }
   .footer-grid { grid-template-columns: 1fr; gap: var(--space-md); }
   .process-grid, .split { gap: var(--space-md); }
 }
