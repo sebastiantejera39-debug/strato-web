@@ -272,7 +272,12 @@ input, textarea, select { font-family: inherit; }
   line-height: 1.05;
   margin: var(--space-sm) 0 var(--space-md);
 }
-.hero h1 em { font-family: var(--font-script); font-style: normal; font-weight: 700; color: var(--color-charcoal); }
+/* Caveat tiene el cuerpo de letra más chico que la tipografía de títulos, así
+   que se agranda para que "tener" tenga el mismo peso visual que el resto. */
+.hero h1 em {
+  font-family: var(--font-script); font-style: normal; font-weight: 700; color: var(--color-charcoal);
+  font-size: 1.55em; line-height: 0.8;
+}
 .hero p.lead { font-size: 1.05rem; max-width: 46ch; }
 .hero__actions { display: flex; gap: var(--space-sm); margin-top: var(--space-md); flex-wrap: wrap; }
 .hero__visual {
@@ -536,6 +541,24 @@ input, textarea, select { font-family: inherit; }
 @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
 .split img, .split .placeholder-art { border-radius: var(--radius); aspect-ratio: 4/5; }
 
+/* ---------- Home: ritmo vertical más compacto ----------
+   Solo aplica a index.html (body.page-home): menos aire entre secciones para
+   que la página se lea de corrido, sin tocar el espaciado de las demás. */
+.page-home .hero { padding: var(--space-md) 0 var(--space-md); }
+.page-home .section,
+.page-home .section--tight { padding: 2.5rem 0; }
+.page-home .section-head { margin-bottom: var(--space-md); }
+.page-home .cta-band { padding: 3rem 0; }
+@media (min-width: 901px) {
+  /* Video más bajo: el bloque de texto queda más cerca del header y de la franja de valores */
+  .page-home .hero__visual { aspect-ratio: 1 / 1; }
+}
+@media (max-width: 900px) {
+  .page-home .hero { padding: var(--space-sm) 0 var(--space-md); }
+  .page-home .section,
+  .page-home .section--tight { padding: 2rem 0; }
+}
+
 /* ---------- Newsletter / CTA banda ---------- */
 .cta-band {
   background: var(--color-charcoal);
@@ -603,6 +626,8 @@ input, textarea, select { font-family: inherit; }
 }
 .lightbox__media { height: 100%; overflow: hidden; }
 .lightbox__media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Producto sin foto todavía: el placeholder ocupa toda la columna de la foto. */
+.lightbox__media .placeholder-art { width: 100%; height: 100%; }
 .cart-item__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* La columna de info ocupa el mismo alto que la foto. Arriba (categoría,
@@ -706,6 +731,81 @@ input, textarea, select { font-family: inherit; }
 .lightbox__qty button {
   width: 30px; height: 30px; border: 1px solid var(--color-line); background: none;
 }
+
+/* ---------- Ficha de producto: tamaños, descuentos por cantidad, total ---------- */
+/* Con tamaños o descuentos hay más para mostrar: el cuadro es un poco más alto
+   (solo en pantallas anchas; en celular el cuadro ya se desplaza entero). */
+@media (min-width: 721px) {
+  .lightbox--rich .lightbox__panel { height: min(680px, 92vh); max-height: min(680px, 92vh); }
+}
+.lightbox__field-label {
+  font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--color-stone-light); margin-bottom: 0.35rem;
+}
+.lightbox__sizes { margin: 0.7rem 0 0; }
+.size-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.size-pill {
+  display: inline-flex; align-items: baseline; gap: 0.5em;
+  padding: 0.5em 1em; border: 1px solid var(--color-line); border-radius: 999px;
+  background: var(--color-paper); color: var(--color-ink);
+  font: inherit; font-size: 0.82rem; cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.size-pill__name { font-weight: 600; }
+.size-pill__price { font-size: 0.76rem; color: var(--color-stone-light); }
+.size-pill:hover { border-color: var(--color-charcoal); }
+.size-pill.active { background: var(--color-charcoal); border-color: var(--color-charcoal); color: var(--color-paper); }
+.size-pill.active .size-pill__price { color: rgba(255,255,255,0.78); }
+
+.lightbox__tiers { margin: 0.7rem 0 0; }
+.tier-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tier-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.05em;
+  padding: 0.4em 0.75em; border: 1px solid var(--color-line); border-radius: var(--radius);
+  background: var(--color-paper); color: var(--color-ink);
+  font: inherit; font-size: 0.74rem; line-height: 1.25; cursor: pointer; text-align: left;
+}
+.tier-chip__qty { font-weight: 700; }
+.tier-chip__price { color: var(--color-stone-light); }
+.tier-chip:hover { border-color: var(--color-charcoal); }
+.tier-chip.active { border-color: var(--color-charcoal); background: var(--color-accent-tint); }
+.lightbox__tiers-note { font-size: 0.72rem; color: var(--color-stone-light); margin-top: 0.35rem; }
+
+.lightbox__qty-input {
+  width: 64px; text-align: center; padding: 0.45em 0.2em;
+  border: 1px solid var(--color-line); border-radius: var(--radius);
+  background: var(--color-paper); color: var(--color-ink);
+  font: inherit; font-size: 0.95rem; -moz-appearance: textfield;
+}
+.lightbox__qty-input::-webkit-outer-spin-button,
+.lightbox__qty-input::-webkit-inner-spin-button,
+.cart-item__qty-input::-webkit-outer-spin-button,
+.cart-item__qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.lightbox__qty-input:focus, .cart-item__qty-input:focus { outline: none; border-color: var(--color-charcoal); }
+.lightbox__total { margin-left: auto; font-size: 0.85rem; color: var(--color-stone-light); text-align: right; }
+.lightbox__total strong { font-size: 1.05rem; color: var(--color-charcoal); font-family: var(--font-display); }
+.lightbox__unit { font-size: 0.75rem; font-weight: 400; color: var(--color-stone-light); }
+.lightbox__price-old { font-size: 0.85rem; font-weight: 400; color: var(--color-stone-light); }
+.lightbox__disc {
+  font-size: 0.72rem; font-weight: 600; color: var(--color-charcoal);
+  background: var(--color-accent-tint); padding: 0.12em 0.55em; border-radius: 999px;
+}
+
+/* Circulito de color (viene del código de color de la pestaña Filamentos). */
+.color-dot {
+  display: inline-block; flex: 0 0 auto;
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 1px solid rgba(53,10,6,0.28);
+  vertical-align: -2px; margin-right: 0.5em;
+}
+.color-multiselect__label { display: inline-flex; align-items: center; }
+.color-multiselect__row.selected { background: var(--color-accent-tint); }
+.color-single .color-multiselect__row { cursor: pointer; }
+
+.product-card__bulk {
+  font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--color-charcoal); margin: 0.1rem 0 0.15rem;
+}
 @media (max-width: 720px) {
   /* En una columna angosta no tiene sentido repartir un alto fijo entre
      foto e info (quedaría todo apretado) — la foto vuelve a su relación
@@ -752,6 +852,14 @@ input, textarea, select { font-family: inherit; }
 .cart-item__meta { font-size: 0.72rem; color: var(--color-stone-light); text-transform: uppercase; letter-spacing: 0.06em; }
 .cart-item__qty { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
 .cart-item__qty button { width: 22px; height: 22px; border: 1px solid var(--color-line); background: none; font-size: 0.8rem; }
+.cart-item__qty-input {
+  width: 46px; height: 22px; padding: 0; text-align: center;
+  border: 1px solid var(--color-line); background: none; color: var(--color-ink);
+  font: inherit; font-size: 0.8rem; -moz-appearance: textfield;
+}
+.cart-item__price { text-align: right; }
+.cart-item__price-old { font-size: 0.74rem; font-weight: 400; color: var(--color-stone-light); }
+.cart-item__disc { display: block; font-size: 0.66rem; font-weight: 600; color: var(--color-charcoal); margin-top: 0.15rem; }
 .cart-item__remove { font-size: 0.68rem; text-decoration: underline; color: var(--color-stone); margin-top: 0.4rem; display: inline-block; }
 .cart-item__note { margin-top: 0.5rem; }
 .cart-item__note-input {
@@ -822,16 +930,17 @@ input, textarea, select { font-family: inherit; }
 .checkout-subhead:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 
 /* ---------- Método de pago (checkout) ---------- */
-.payment-method__toggle { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
+.payment-method__toggle { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .payment-method__btn {
-  display: block; width: 100%; padding: 0.9em 1em; border: 1px solid var(--color-line);
-  background: var(--color-paper); border-radius: var(--radius); font-size: 0.86rem;
-  font-family: var(--font-display); color: var(--color-ink); cursor: pointer; text-align: center;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  background: transparent; border: 1px solid var(--color-line);
+  padding: 0.7em 1.4em; font-size: 0.76rem; letter-spacing: 0.08em; text-transform: uppercase;
+  font-family: var(--font-body); font-weight: 500; color: var(--color-stone);
+  border-radius: 999px; cursor: pointer; text-align: center;
+  transition: all var(--transition);
 }
-.payment-method__btn:hover { border-color: var(--color-accent-dark); }
+.payment-method__btn:hover { border-color: var(--color-charcoal); color: var(--color-charcoal); }
 .payment-method__btn.active {
-  border-color: var(--color-charcoal); background: var(--color-accent-tint);
+  border-color: var(--color-charcoal); background: var(--color-charcoal); color: var(--color-paper);
 }
 .payment-method__info {
   margin-top: var(--space-sm); padding: var(--space-sm) var(--space-md);
@@ -840,7 +949,7 @@ input, textarea, select { font-family: inherit; }
 }
 .payment-method__info p { margin: 0 0 0.4em; }
 .payment-method__info p:last-child { margin-bottom: 0; }
-.payment-method__warning { color: var(--color-warning); font-weight: 600; }
+.payment-method__warning { color: var(--color-warning); font-style: italic; font-size: 0.76rem; }
 
 @media (max-width: 900px) {
   .payment-method__toggle { grid-template-columns: 1fr; }
