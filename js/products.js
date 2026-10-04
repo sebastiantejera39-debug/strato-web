@@ -194,8 +194,39 @@ const STRATO_PRODUCTS = [
   },
 ];
 
+/* ---------- Datos que llegan desde el panel admin (supabase-client.js) ----------
+   Mientras Supabase no esté configurado (o falle la carga) quedan vacíos y
+   el sitio se comporta igual que siempre.
+
+   STRATO_TIERS: descuentos por cantidad globales, de menor a mayor:
+     [{ from: 10, pct: 5 }, { from: 20, pct: 10 }]  → desde 10 un. 5%, desde 20 un. 10%
+   Cada producto con byQuantity = true los usa (o los suyos, product.ownTiers).
+
+   STRATO_FILAMENTS: colores de la pestaña Filamentos del admin, solo los datos
+   públicos (nunca precios):  [{ color: "Negro", hex: "#111111", available: true }]
+   Sirven para el circulito de color y para ocultar colores sin stock.
+
+   Un producto puede traer además:
+     sizes:      [{ name: "Chico", price: 200 }, ...]  → el cliente elige tamaño
+     byQuantity: true                                  → aplica descuento por cantidad
+     ownTiers:   [{ from, pct }] | null                → escalones propios de ese producto */
+const STRATO_TIERS = [];
+const STRATO_FILAMENTS = [];
+
 /* Utilidad para formatear precio en pesos uruguayos */
+function stratoMoney(n) {
+  return "$U " + Math.round(Number(n) || 0).toLocaleString("es-UY");
+}
+
+/* Con tamaños: "Desde $U X" (el más barato) cuando hay precios distintos. */
 function stratoFormatPrice(product) {
+  const sizes = (product.sizes || []).filter((s) => s.price != null);
+  if (sizes.length) {
+    const prices = sizes.map((s) => Number(s.price));
+    const min = Math.min.apply(null, prices);
+    const max = Math.max.apply(null, prices);
+    return (min === max ? "" : "Desde ") + "$U " + min.toLocaleString("es-UY");
+  }
   if (product.price == null) return product.priceLabel || "Cotizar";
   return "$U " + product.price.toLocaleString("es-UY");
 }

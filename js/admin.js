@@ -23,12 +23,21 @@
   let gastosCache = [];
   let maquinasCache = [];
   let cotizacionesCache = [];
+  let filamentosCache = [];
+  let escalonesCache = [];
   let editingMaquinaId = null;
+  let editingCotizacionId = null;
+  let editingFilamentoId = null;
+  let editingEscalonId = null;
+  let v7TablasOk = true; // false si no se pudieron leer las tablas de la migración v7 (probablemente no se corrió)
 
   let editingProductId = null;
   let editingCategoriaId = null;
   let prodImagenes = []; // strings (url) o {uploading:true, tempId, name}
   let prodColores = [];
+  let prodTamanos = []; // [{nombre, precio}] tal como se van tipeando en el formulario
+  let prodEscalones = []; // [{desde, descuento_pct}] escalones propios del producto en edición
+  let calcFilRows = []; // filamentos de la cotización en curso: [{filamento_id, gramos, precio_kg}]
   let prodCategoriaIds = []; // ids de categorías elegidas para el producto en edición (muchos-a-muchos)
   let catImagenPortada = null; // url de la foto de portada de la categoría en edición, o null
 
@@ -96,16 +105,24 @@
     document.getElementById("app").style.display = "block";
     document.getElementById("user-email").textContent = user.email;
 
-    await Promise.all([loadCategorias(), loadProductos(), loadPedidos(), loadMaquinas(), loadCotizaciones()]);
+    await Promise.all([
+      loadCategorias(), loadProductos(), loadPedidos(), loadMaquinas(), loadCotizaciones(), loadFilamentos(), loadEscalones(),
+    ]);
     fillCategoriaSelects();
     renderDashboard();
     renderPedidos();
     renderProductos();
     renderCategorias();
     renderCatImgManager(false);
+    renderFilamentos();
+    renderEscalones();
+    renderProdTamanos();
+    renderProdEscalones();
+    renderColorTags();
     renderMaquinas();
     fillMaquinaSelect();
     renderCotizaciones();
+    renderCalcFilRows();
     renderResultados();
 
     const hoy = todayStr();
@@ -286,7 +303,7 @@
 
   function resumenItems(items) {
     if (!items || !items.length) return "—";
-    return items.map((it) => it.qty + "× " + escHtml(it.nombre)).join(", ");
+    return items.map((it) => it.qty + "× " + escHtml(it.nombre) + (it.tamano ? " (" + escHtml(it.tamano) + ")" : "")).join(", ");
   }
 
   window.stratoAdminVerPedido = function (id) {
@@ -368,7 +385,10 @@
     const items = (p.items || [])
       .map(
         (it) =>
-          "• " + it.qty + "× " + escHtml(it.nombre) + (it.color ? " (" + escHtml(it.color) + ")" : "") + " — " + fmtMoney(it.precio) +
+          "• " + it.qty + "× " + escHtml(it.nombre) +
+          (it.tamano || it.color ? " (" + [it.tamano, it.color].filter(Boolean).map(escHtml).join(", ") + ")" : "") +
+          " — " + fmtMoney(it.precio) + " c/u" +
+          (it.descuento_cantidad_pct ? " <em>(-" + escHtml(it.descuento_cantidad_pct) + "% por cantidad, lista " + fmtMoney(it.precio_lista) + ")</em>" : "") +
           (it.nota ? "<br>&nbsp;&nbsp;<em>Obs: " + escHtml(it.nota) + "</em>" : "")
       )
       .join("<br>");
@@ -426,15 +446,23 @@
     tbody.innerHTML = list
       .map((p) => {
         const img = p.imagenes && p.imagenes[0] ? '<img class="thumb" src="' + p.imagenes[0] + '">' : '<div class="thumb"></div>';
+        const tams = Array.isArray(p.tamanos) ? p.tamanos : [];
+        const extras = [];
+        if (tams.length) extras.push(tams.length + (tams.length === 1 ? " tamaño" : " tamaños"));
+        if (p.venta_por_cantidad) extras.push("por cantidad");
+        const precioTxt = tams.length
+          ? "Desde " + fmtMoney(Math.min.apply(null, tams.map((t) => Number(t.precio))))
+          : p.precio == null ? "Cotizar" : fmtMoney(p.precio);
         return (
           "<tr><td>" +
           img +
           "</td><td>" +
           escHtml(p.nombre) +
+          (extras.length ? "<br><span class='muted' style='font-size:11px;'>" + extras.join(" · ") + "</span>" : "") +
           "</td><td>" +
           (productoCategoriaNombres(p) || "—") +
           "</td><td>" +
-          (p.precio == null ? "Cotizar" : fmtMoney(p.precio)) +
+          precioTxt +
           "</td><td>" +
           (p.tag ? '<span class="badge-pill">' + escHtml(p.tag) + "</span>" : "—") +
           '</td><td><input type="checkbox" ' +
@@ -483,6 +511,13 @@
     prodColores = (p.colores || []).slice();
     prodImagenes = (p.imagenes || []).slice();
     prodCategoriaIds = productoCategoriaIds(p);
+    prodTamanos = (Array.isArray(p.tamanos) ? p.tamanos : []).map((t) => ({ nombre: t.nombre || "", precio: t.precio }));
+    prodEscalones = (Array.isArray(p.escalones_propios) ? p.escalones_propios : []).map((t) => ({ desde: t.desde, descuento_pct: t.descuento_pct }));
+    document.getElementById("prod-por-cantidad").checked = !!p.venta_por_cantidad;
+    document.getElementById("prod-escalones-propios").checked = Array.isArray(p.escalones_propios) && p.escalones_propios.length > 0;
+    renderProdTamanos();
+    renderProdEscalones();
+    syncCantidadUI();
     renderColorTags();
     renderImgManager();
     renderProdCategoriasCheck();
@@ -507,6 +542,11 @@
     prodColores = [];
     prodImagenes = [];
     prodCategoriaIds = [];
+    prodTamanos = [];
+    prodEscalones = [];
+    renderProdTamanos();
+    renderProdEscalones();
+    syncCantidadUI();
     renderColorTags();
     renderImgManager();
     renderProdCategoriasCheck();
@@ -528,11 +568,17 @@
   function renderColorTags() {
     const wrap = document.getElementById("prod-colores-tags");
     wrap.innerHTML = prodColores
-      .map(
-        (c, i) =>
-          '<span class="color-tag">' + escHtml(c) + ' <button type="button" onclick="stratoAdminQuitarColor(' + i + ')">✕</button></span>'
-      )
+      .map((c, i) => {
+        // Un color que no está en la lista de Filamentos (cargado a mano, o de
+        // antes de que existiera esa lista) se marca para distinguirlo.
+        const manual = filamentosCache.length && !filamentosCache.some((f) => sameColor(f.color, c));
+        return (
+          '<span class="color-tag">' + escHtml(c) + (manual ? ' <span class="muted" style="font-size:10px;">manual</span>' : "") +
+          ' <button type="button" onclick="stratoAdminQuitarColor(' + i + ')">✕</button></span>'
+        );
+      })
       .join("");
+    renderProdFilPicker();
   }
   window.stratoAdminQuitarColor = function (i) {
     prodColores.splice(i, 1);
@@ -844,9 +890,54 @@
     const cotizar = document.getElementById("prod-cotizar").checked;
     const precioVal = document.getElementById("prod-precio").value;
 
+    // Tamaños (cada uno con su precio). Las filas totalmente vacías se ignoran;
+    // las a medias (solo nombre o solo precio) frenan el guardado.
+    const tamanos = [];
+    for (const t of prodTamanos) {
+      const nombreT = String(t.nombre || "").trim();
+      const precioT = t.precio === "" || t.precio == null ? null : Number(t.precio);
+      if (!nombreT && precioT == null) continue;
+      if (!nombreT || precioT == null || isNaN(precioT) || precioT < 0) {
+        errEl.textContent = "Cada tamaño necesita un nombre y un precio (o quitá la fila vacía).";
+        return;
+      }
+      if (tamanos.some((x) => x.nombre.toLowerCase() === nombreT.toLowerCase())) {
+        errEl.textContent = "Hay dos tamaños con el mismo nombre: \"" + nombreT + "\".";
+        return;
+      }
+      tamanos.push({ nombre: nombreT, precio: precioT });
+    }
+
+    // Escalones propios (solo si el producto se vende por cantidad y eligió no usar la tabla general).
+    const porCantidad = document.getElementById("prod-por-cantidad").checked;
+    let escalonesPropios = null;
+    if (porCantidad && document.getElementById("prod-escalones-propios").checked) {
+      escalonesPropios = [];
+      for (const t of prodEscalones) {
+        const vacio = (t.desde === "" || t.desde == null) && (t.descuento_pct === "" || t.descuento_pct == null);
+        if (vacio) continue;
+        const desde = Number(t.desde);
+        const pct = Number(t.descuento_pct);
+        if (!Number.isInteger(desde) || desde < 2 || !(pct > 0 && pct < 100)) {
+          errEl.textContent = "Los escalones propios necesitan una cantidad entera desde 2 y un descuento entre 0 y 100%.";
+          return;
+        }
+        if (escalonesPropios.some((x) => x.desde === desde)) {
+          errEl.textContent = "Hay dos escalones propios desde " + desde + " unidades.";
+          return;
+        }
+        escalonesPropios.push({ desde: desde, descuento_pct: pct });
+      }
+      if (!escalonesPropios.length) {
+        errEl.textContent = "Cargá al menos un escalón propio, o desmarcá \"Usar descuentos propios\".";
+        return;
+      }
+      escalonesPropios.sort((a, b) => a.desde - b.desde);
+    }
+
     const payload = {
       nombre: document.getElementById("prod-nombre").value.trim(),
-      precio: cotizar || precioVal === "" ? null : Number(precioVal),
+      precio: tamanos.length ? Math.min.apply(null, tamanos.map((t) => t.precio)) : cotizar || precioVal === "" ? null : Number(precioVal),
       colores: prodColores,
       colores_multiple: document.getElementById("prod-colores-multiple").checked,
       material: document.getElementById("prod-material").value.trim(),
@@ -856,6 +947,21 @@
       orden: Number(document.getElementById("prod-orden").value || 0),
       activo: document.getElementById("prod-activo").checked,
     };
+
+    // Columnas de la migración v7. Si la base todavía no las tiene (la migración
+    // no se corrió) y este producto no usa nada de eso, se omiten para que
+    // guardar productos siga funcionando igual que antes.
+    const usaV7 = tamanos.length > 0 || porCantidad || escalonesPropios !== null;
+    // Con productos cargados se mira si traen la columna; sin productos, si se pudieron leer las tablas nuevas.
+    const baseTieneV7 = productosCache.length ? "tamanos" in productosCache[0] : v7TablasOk;
+    if (baseTieneV7) {
+      payload.tamanos = tamanos;
+      payload.venta_por_cantidad = porCantidad;
+      payload.escalones_propios = escalonesPropios;
+    } else if (usaV7) {
+      errEl.textContent = "Falta correr la migración SQL v7 en Supabase (archivo supabase/migracion_v7_filamentos_tamanos_cantidades.sql) para usar tamaños y venta por cantidad.";
+      return;
+    }
 
     if (!payload.nombre) { errEl.textContent = "Falta el nombre."; return; }
     if (!prodCategoriaIds.length) { errEl.textContent = "Elegí al menos una categoría (creá una primero si no hay ninguna)."; return; }
@@ -977,6 +1083,378 @@
     resetCategoriaForm();
   });
 
+  /* ============ FILAMENTOS ============ */
+  /* Inventario de filamentos: alimenta la calculadora (precio por kg real), los
+     colores de cada producto y el circulito de color en la tienda. */
+  function sameColor(a, b) {
+    return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+  }
+  function precioKgDe(f) {
+    const peso = Number(f.peso_rollo_gr);
+    return peso > 0 ? (Number(f.precio_rollo) / peso) * 1000 : 0;
+  }
+  function filamentoNombre(f) {
+    return f.color + (f.marca ? " — " + f.marca : "") + (f.material ? " (" + f.material + ")" : "");
+  }
+  function swatchHtml(hex) {
+    return hex && /^#[0-9a-fA-F]{3,8}$/.test(hex) ? '<span class="sw" style="background:' + hex + '"></span>' : "";
+  }
+
+  async function loadFilamentos() {
+    const errEl = document.getElementById("filamentos-load-error");
+    const { data, error } = await stratoSb
+      .from("filamentos")
+      .select("*")
+      .order("orden", { ascending: true })
+      .order("color", { ascending: true });
+    if (error) {
+      v7TablasOk = false;
+      filamentosCache = [];
+      errEl.textContent = "No se pudo cargar Filamentos (¿corriste la migración SQL v7 en Supabase?): " + error.message;
+    } else {
+      filamentosCache = data || [];
+      errEl.textContent = "";
+    }
+  }
+
+  document.getElementById("filamento-form-toggle").addEventListener("click", () => {
+    document.getElementById("filamento-form-toggle").classList.toggle("open");
+    document.getElementById("filamento-form-body").classList.toggle("open");
+  });
+  document.getElementById("filamentos-buscar").addEventListener("input", renderFilamentos);
+
+  function renderFilamentos() {
+    const term = document.getElementById("filamentos-buscar").value.trim().toLowerCase();
+    const list = filamentosCache.filter(
+      (f) => !term || [f.color, f.marca, f.material].filter(Boolean).join(" ").toLowerCase().includes(term)
+    );
+    document.getElementById("filamentos-empty").style.display = list.length ? "none" : "block";
+    document.getElementById("filamentos-tbody").innerHTML = list
+      .map(
+        (f) =>
+          "<tr><td>" + swatchHtml(f.hex) + escHtml(f.color) + "</td><td>" + escHtml(f.marca || "—") + "</td><td>" +
+          escHtml(f.material || "—") + "</td><td>" + fmtMoney(f.precio_rollo) + " <span class='muted'>/ " +
+          Number(f.peso_rollo_gr) + " gr</span></td><td>" + fmtMoney(precioKgDe(f)) + '</td><td><input type="checkbox" ' +
+          (f.disponible ? "checked" : "") + " onchange=\"stratoAdminToggleFilamento('" + f.id + "', this.checked)\"></td>" +
+          "<td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarFilamento('" + f.id +
+          "')\">Editar</button> <button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarFilamento('" +
+          f.id + "')\">Eliminar</button></td></tr>"
+      )
+      .join("");
+  }
+
+  /* Cada vez que cambia la lista de filamentos hay tres lugares que dependen de ella. */
+  function refreshFilamentoDependents() {
+    renderFilamentos();
+    renderColorTags(); // también redibuja el selector de colores del producto
+    renderCalcFilRows();
+    renderResultados();
+  }
+
+  function updateFilKgPreview() {
+    const precio = numVal("fil-precio-rollo");
+    const peso = numVal("fil-peso-rollo");
+    document.getElementById("fil-kg-preview").textContent = peso > 0 ? fmtMoney((precio / peso) * 1000) + " / kg" : "—";
+  }
+  document.getElementById("fil-precio-rollo").addEventListener("input", updateFilKgPreview);
+  document.getElementById("fil-peso-rollo").addEventListener("input", updateFilKgPreview);
+
+  function resetFilamentoForm() {
+    editingFilamentoId = null;
+    document.getElementById("form-filamento").reset();
+    document.getElementById("fil-material").value = "PLA";
+    document.getElementById("fil-peso-rollo").value = 1000;
+    document.getElementById("fil-hex").value = "#333333";
+    document.getElementById("fil-hex-activo").checked = true;
+    document.getElementById("fil-disponible").checked = true;
+    document.getElementById("filamento-form-title").textContent = "Nuevo filamento";
+    document.getElementById("fil-submit-btn").textContent = "Guardar filamento";
+    document.getElementById("fil-cancel-btn").style.display = "none";
+    document.getElementById("filamento-error").textContent = "";
+    updateFilKgPreview();
+  }
+  document.getElementById("fil-cancel-btn").addEventListener("click", resetFilamentoForm);
+
+  window.stratoAdminEditarFilamento = function (id) {
+    const f = filamentosCache.find((x) => x.id === id);
+    if (!f) return;
+    editingFilamentoId = id;
+    document.getElementById("fil-color").value = f.color;
+    document.getElementById("fil-marca").value = f.marca || "";
+    document.getElementById("fil-material").value = f.material || "";
+    document.getElementById("fil-precio-rollo").value = f.precio_rollo;
+    document.getElementById("fil-peso-rollo").value = f.peso_rollo_gr;
+    document.getElementById("fil-hex-activo").checked = !!f.hex;
+    document.getElementById("fil-hex").value = f.hex && /^#[0-9a-fA-F]{6}$/.test(f.hex) ? f.hex : "#333333";
+    document.getElementById("fil-disponible").checked = f.disponible !== false;
+    document.getElementById("filamento-form-title").textContent = "Editar filamento";
+    document.getElementById("fil-submit-btn").textContent = "Guardar cambios";
+    document.getElementById("fil-cancel-btn").style.display = "inline-block";
+    document.getElementById("filamento-error").textContent = "";
+    updateFilKgPreview();
+    if (!document.getElementById("filamento-form-body").classList.contains("open")) {
+      document.getElementById("filamento-form-toggle").click();
+    }
+    document.getElementById("panel-filamentos").scrollIntoView({ behavior: "smooth" });
+  };
+
+  window.stratoAdminToggleFilamento = async function (id, disponible) {
+    const { error } = await stratoSb.from("filamentos").update({ disponible }).eq("id", id);
+    if (error) { alert("No se pudo actualizar: " + error.message); return; }
+    const f = filamentosCache.find((x) => x.id === id);
+    if (f) f.disponible = disponible;
+    refreshFilamentoDependents();
+  };
+
+  window.stratoAdminEliminarFilamento = async function (id) {
+    if (!confirm("¿Eliminar este filamento? Los productos que ya lo tienen como color siguen mostrándolo, pero deja de estar en esta lista y en la calculadora.")) return;
+    const { error } = await stratoSb.from("filamentos").delete().eq("id", id);
+    if (error) { alert("No se pudo eliminar: " + error.message); return; }
+    if (editingFilamentoId === id) resetFilamentoForm();
+    await loadFilamentos();
+    refreshFilamentoDependents();
+  };
+
+  document.getElementById("form-filamento").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById("filamento-error");
+    errEl.textContent = "";
+    const payload = {
+      color: document.getElementById("fil-color").value.trim(),
+      marca: document.getElementById("fil-marca").value.trim(),
+      material: document.getElementById("fil-material").value.trim() || "PLA",
+      precio_rollo: numVal("fil-precio-rollo"),
+      peso_rollo_gr: numVal("fil-peso-rollo"),
+      hex: document.getElementById("fil-hex-activo").checked ? document.getElementById("fil-hex").value : null,
+      disponible: document.getElementById("fil-disponible").checked,
+    };
+    if (!payload.color) { errEl.textContent = "Falta el color."; return; }
+    if (!(payload.peso_rollo_gr > 0)) { errEl.textContent = "El peso del rollo tiene que ser mayor a 0."; return; }
+    if (!requireSb()) return;
+
+    let error;
+    if (editingFilamentoId) {
+      ({ error } = await stratoSb.from("filamentos").update(payload).eq("id", editingFilamentoId));
+    } else {
+      ({ error } = await stratoSb.from("filamentos").insert([payload]));
+    }
+    if (error) { errEl.textContent = error.message; return; }
+
+    await loadFilamentos();
+    resetFilamentoForm();
+    refreshFilamentoDependents();
+  });
+
+  /* ---- Selector de colores del producto, armado con los filamentos ---- */
+  function renderProdFilPicker() {
+    const wrap = document.getElementById("prod-fil-picker");
+    // Una sola pastilla por nombre de color (si tenés el mismo color en dos
+    // marcas, es el mismo color para el cliente).
+    const porColor = new Map();
+    filamentosCache.forEach((f) => {
+      const key = String(f.color).trim().toLowerCase();
+      if (!porColor.has(key)) porColor.set(key, { color: String(f.color).trim(), hex: f.hex, marcas: [], disponible: false });
+      const e = porColor.get(key);
+      if (f.marca && !e.marcas.includes(f.marca)) e.marcas.push(f.marca);
+      e.disponible = e.disponible || f.disponible !== false;
+      if (!e.hex && f.hex) e.hex = f.hex;
+    });
+    if (!porColor.size) {
+      wrap.innerHTML = '<p class="muted" style="font-size:12px;margin:0;">Todavía no cargaste filamentos (pestaña Filamentos). Mientras tanto podés escribir los colores a mano acá abajo.</p>';
+      return;
+    }
+    wrap.innerHTML = Array.from(porColor.values())
+      .map((e) => {
+        const activo = prodColores.some((c) => sameColor(c, e.color));
+        return (
+          '<button type="button" class="fil-pill' + (activo ? " active" : "") + (e.disponible ? "" : " off") +
+          '" data-color="' + escHtml(e.color) + '" title="' + escHtml(e.marcas.join(", ") + (e.disponible ? "" : " — sin stock")) +
+          '" onclick="stratoAdminToggleColorFil(this.dataset.color)">' + swatchHtml(e.hex) +
+          '<span class="fil-name">' + escHtml(e.color) + "</span></button>"
+        );
+      })
+      .join("");
+  }
+  window.stratoAdminToggleColorFil = function (color) {
+    const i = prodColores.findIndex((c) => sameColor(c, color));
+    if (i >= 0) prodColores.splice(i, 1);
+    else prodColores.push(color);
+    renderColorTags();
+  };
+
+  /* ============ TAMAÑOS Y VENTA POR CANTIDAD (formulario de producto) ============ */
+  function tamanoValido(t) {
+    return String(t.nombre || "").trim() !== "" && t.precio !== "" && t.precio != null && !isNaN(Number(t.precio));
+  }
+
+  // Con al menos un tamaño válido, el precio base pasa a ser el del más barato
+  // y deja de ser editable a mano (así no quedan dos precios contradictorios).
+  function syncPrecioDesdeTamanos() {
+    const validos = prodTamanos.filter(tamanoValido);
+    const precio = document.getElementById("prod-precio");
+    const cot = document.getElementById("prod-cotizar");
+    if (validos.length) {
+      precio.value = Math.min.apply(null, validos.map((t) => Number(t.precio)));
+      precio.disabled = true;
+      cot.checked = false;
+      cot.disabled = true;
+    } else {
+      precio.disabled = false;
+      cot.disabled = false;
+    }
+  }
+
+  function renderProdTamanos() {
+    document.getElementById("prod-tamanos-rows").innerHTML = prodTamanos
+      .map(
+        (t, i) =>
+          '<div class="row-edit"><input type="text" placeholder="Nombre (ej: Chico, 10 cm)" value="' + escHtml(t.nombre) +
+          '" oninput="stratoAdminTamanoSet(' + i + ",'nombre',this.value)\"><input type=\"number\" min=\"0\" step=\"1\" placeholder=\"Precio $U\" value=\"" +
+          escHtml(t.precio) + '" oninput="stratoAdminTamanoSet(' + i + ",'precio',this.value)\"><button type=\"button\" class=\"row-del\" onclick=\"stratoAdminTamanoDel(" +
+          i + ')" aria-label="Quitar">✕</button></div>'
+      )
+      .join("");
+    syncPrecioDesdeTamanos();
+  }
+  window.stratoAdminTamanoSet = function (i, key, value) {
+    if (prodTamanos[i]) prodTamanos[i][key] = value;
+    syncPrecioDesdeTamanos();
+  };
+  window.stratoAdminTamanoDel = function (i) {
+    prodTamanos.splice(i, 1);
+    renderProdTamanos();
+  };
+  document.getElementById("prod-add-tamano").addEventListener("click", () => {
+    prodTamanos.push({ nombre: "", precio: "" });
+    renderProdTamanos();
+  });
+
+  function renderProdEscalones() {
+    document.getElementById("prod-escalones-rows").innerHTML = prodEscalones
+      .map(
+        (t, i) =>
+          '<div class="row-edit" style="grid-template-columns:1fr 1fr 36px;"><input type="number" min="2" step="1" placeholder="Desde (unidades)" value="' +
+          escHtml(t.desde) + '" oninput="stratoAdminEscalonSet(' + i + ",'desde',this.value)\"><input type=\"number\" min=\"0.5\" max=\"99\" step=\"0.5\" placeholder=\"Descuento %\" value=\"" +
+          escHtml(t.descuento_pct) + '" oninput="stratoAdminEscalonSet(' + i + ",'descuento_pct',this.value)\"><button type=\"button\" class=\"row-del\" onclick=\"stratoAdminEscalonDel(" +
+          i + ')" aria-label="Quitar">✕</button></div>'
+      )
+      .join("");
+  }
+  window.stratoAdminEscalonSet = function (i, key, value) {
+    if (prodEscalones[i]) prodEscalones[i][key] = value;
+  };
+  window.stratoAdminEscalonDel = function (i) {
+    prodEscalones.splice(i, 1);
+    renderProdEscalones();
+  };
+  document.getElementById("prod-add-escalon").addEventListener("click", () => {
+    prodEscalones.push({ desde: "", descuento_pct: "" });
+    renderProdEscalones();
+  });
+
+  /* Muestra/oculta los bloques de "vender por cantidad" según las casillas. */
+  function syncCantidadUI() {
+    const porCantidad = document.getElementById("prod-por-cantidad").checked;
+    document.getElementById("prod-cantidad-extra").style.display = porCantidad ? "block" : "none";
+    const propios = document.getElementById("prod-escalones-propios").checked;
+    document.getElementById("prod-escalones-propios-box").style.display = porCantidad && propios ? "block" : "none";
+    if (porCantidad && propios && !prodEscalones.length) {
+      prodEscalones.push({ desde: "", descuento_pct: "" });
+      renderProdEscalones();
+    }
+  }
+  document.getElementById("prod-por-cantidad").addEventListener("change", syncCantidadUI);
+  document.getElementById("prod-escalones-propios").addEventListener("change", syncCantidadUI);
+
+  /* ============ DESCUENTOS POR CANTIDAD (tabla global) ============ */
+  async function loadEscalones() {
+    const errEl = document.getElementById("escalones-load-error");
+    const { data, error } = await stratoSb.from("escalones_cantidad").select("*").order("desde", { ascending: true });
+    if (error) {
+      v7TablasOk = false;
+      escalonesCache = [];
+      errEl.textContent = "No se pudo cargar la tabla de descuentos (¿corriste la migración SQL v7 en Supabase?): " + error.message;
+    } else {
+      escalonesCache = data || [];
+      errEl.textContent = "";
+    }
+  }
+
+  document.getElementById("escalones-toggle").addEventListener("click", () => {
+    document.getElementById("escalones-toggle").classList.toggle("open");
+    document.getElementById("escalones-body").classList.toggle("open");
+  });
+
+  function renderEscalones() {
+    document.getElementById("escalones-empty").style.display = escalonesCache.length ? "none" : "block";
+    document.getElementById("escalones-tbody").innerHTML = escalonesCache
+      .map(
+        (t) =>
+          "<tr><td>" + Number(t.desde) + " unidades o más</td><td>" + Number(t.descuento_pct) + "%</td><td>" +
+          "<button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarEscalon('" + t.id +
+          "')\">Editar</button> <button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarEscalon('" +
+          t.id + "')\">Eliminar</button></td></tr>"
+      )
+      .join("");
+  }
+
+  function resetEscalonForm() {
+    editingEscalonId = null;
+    document.getElementById("form-escalon").reset();
+    document.getElementById("esc-submit-btn").textContent = "Guardar escalón";
+    document.getElementById("esc-cancel-btn").style.display = "none";
+    document.getElementById("escalon-error").textContent = "";
+  }
+  document.getElementById("esc-cancel-btn").addEventListener("click", resetEscalonForm);
+
+  window.stratoAdminEditarEscalon = function (id) {
+    const t = escalonesCache.find((x) => x.id === id);
+    if (!t) return;
+    editingEscalonId = id;
+    document.getElementById("esc-desde").value = t.desde;
+    document.getElementById("esc-pct").value = t.descuento_pct;
+    document.getElementById("esc-submit-btn").textContent = "Guardar cambios";
+    document.getElementById("esc-cancel-btn").style.display = "inline-block";
+    document.getElementById("escalon-error").textContent = "";
+  };
+
+  window.stratoAdminEliminarEscalon = async function (id) {
+    if (!confirm("¿Eliminar este escalón de descuento?")) return;
+    const { error } = await stratoSb.from("escalones_cantidad").delete().eq("id", id);
+    if (error) { alert("No se pudo eliminar: " + error.message); return; }
+    if (editingEscalonId === id) resetEscalonForm();
+    await loadEscalones();
+    renderEscalones();
+  };
+
+  document.getElementById("form-escalon").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById("escalon-error");
+    errEl.textContent = "";
+    const desde = Number(document.getElementById("esc-desde").value);
+    const pct = Number(document.getElementById("esc-pct").value);
+    if (!Number.isInteger(desde) || desde < 2) { errEl.textContent = "La cantidad tiene que ser un número entero desde 2."; return; }
+    if (!(pct > 0 && pct < 100)) { errEl.textContent = "El descuento tiene que estar entre 0 y 100%."; return; }
+    if (!requireSb()) return;
+
+    const payload = { desde: desde, descuento_pct: pct };
+    let error;
+    if (editingEscalonId) {
+      ({ error } = await stratoSb.from("escalones_cantidad").update(payload).eq("id", editingEscalonId));
+    } else {
+      ({ error } = await stratoSb.from("escalones_cantidad").insert([payload]));
+    }
+    if (error) {
+      errEl.textContent = error.code === "23505" || /duplicate|unique/i.test(error.message)
+        ? "Ya hay un escalón desde " + desde + " unidades. Editalo en la lista."
+        : error.message;
+      return;
+    }
+    await loadEscalones();
+    renderEscalones();
+    resetEscalonForm();
+  });
+
   /* ============ GASTOS ============ */
   document.getElementById("gastos-filtrar").addEventListener("click", async () => {
     await loadGastos(document.getElementById("gastos-desde").value, document.getElementById("gastos-hasta").value);
@@ -1047,7 +1525,8 @@
   /*
    Fórmula (verificada contra una calculadora de referencia del rubro):
      horas_uso        = horas_impresion + minutos_adicionales/60
-     costo_material    = (peso_gr/1000) * precio_filamento_kg
+     costo_material    = suma de (gramos_i/1000) * precio_kg_i  — una fila por filamento usado
+                         (peso_gr = suma de los gramos de todas las filas)
      costo_electricidad = (potencia_w * horas_uso / 1000) * costo_kwh
      desgaste_maquina  = (costo_reposicion / vida_util_horas) * horas_uso
      margen_error_monto = margen_error_pct * (material + electricidad + desgaste + acabados)
@@ -1062,18 +1541,32 @@
     const potenciaW = numVal("calc-potencia");
     const vidaUtilHoras = Math.max(numVal("calc-vida-util"), 1);
     const costoReposicion = numVal("calc-costo-reposicion");
-    const precioFilamento = numVal("calc-precio-filamento");
     const costoElectricidadKwh = numVal("calc-costo-electricidad");
     const horasImpresion = numVal("calc-horas");
     const minutosAdicionales = numVal("calc-minutos");
-    const pesoGr = numVal("calc-peso");
+
+    // Filamentos de la pieza: cada fila aporta sus gramos al peso total y su
+    // costo (gramos × precio por kg del filamento elegido, o el escrito a mano).
+    const filamentos = calcFilRows.map((r) => {
+      const f = filamentosCache.find((x) => x.id === r.filamento_id);
+      return {
+        filamento_id: f ? f.id : null,
+        nombre: f ? f.color + (f.marca ? " (" + f.marca + ")" : "") : "manual",
+        gramos: Number(r.gramos) || 0,
+        precio_kg: Number(r.precio_kg) || 0,
+      };
+    });
+    const pesoGr = filamentos.reduce((sum, f) => sum + f.gramos, 0);
+    const costoMaterial = filamentos.reduce((sum, f) => sum + (f.gramos / 1000) * f.precio_kg, 0);
+    // Precio por kg promedio ponderado: es el que se muestra y el que queda en
+    // "precio_filamento_kg" del historial (compatible con cotizaciones viejas).
+    const precioFilamento = pesoGr > 0 ? (costoMaterial / pesoGr) * 1000 : filamentos.length ? filamentos[0].precio_kg : 0;
     const margenErrorPct = numVal("calc-margen-error") / 100;
     const margenGanancia = numVal("calc-margen-ganancia");
     const accesorio = numVal("calc-accesorio");
     const acabados = numVal("calc-acabados");
 
     const horasUso = horasImpresion + minutosAdicionales / 60;
-    const costoMaterial = (pesoGr / 1000) * precioFilamento;
     const costoElectricidad = ((potenciaW * horasUso) / 1000) * costoElectricidadKwh;
     const desgasteMaquina = (costoReposicion / vidaUtilHoras) * horasUso;
     const margenErrorMonto = margenErrorPct * (costoMaterial + costoElectricidad + desgasteMaquina + acabados);
@@ -1083,6 +1576,7 @@
     const gananciaPct = totalACobrar > 0 ? (gananciaNeta / totalACobrar) * 100 : 0;
 
     return {
+      filamentos,
       potenciaW, vidaUtilHoras, costoReposicion, precioFilamento, costoElectricidadKwh,
       horasImpresion, minutosAdicionales, pesoGr, margenErrorPct, margenGanancia, accesorio, acabados,
       horasUso, costoMaterial, costoElectricidad, desgasteMaquina, margenErrorMonto,
@@ -1101,9 +1595,14 @@
   function renderResultados() {
     const r = calcularCosto();
     document.getElementById("calc-horas-uso").textContent = "(" + r.horasUso.toFixed(2) + " h de uso)";
+    document.getElementById("calc-peso-total").textContent = r.pesoGr + " gr";
 
     let html = "";
-    html += calcLinea("Costo material", r.pesoGr + " gr · " + fmtMoney(r.precioFilamento) + "/kg", r.costoMaterial);
+    const detalleMaterial =
+      r.filamentos.length > 1
+        ? r.filamentos.map((f) => f.gramos + " gr " + escHtml(f.nombre) + " × " + fmtMoney(f.precio_kg) + "/kg").join(" + ")
+        : r.pesoGr + " gr · " + fmtMoney(r.precioFilamento) + "/kg";
+    html += calcLinea("Costo material", detalleMaterial, r.costoMaterial);
     html += calcLinea("Costo electricidad", r.potenciaW + " W · " + fmtMoney(r.costoElectricidadKwh) + "/kWh", r.costoElectricidad);
     html += calcLinea("Desgaste máquina", "Amortización por " + r.vidaUtilHoras + " h", r.desgasteMaquina);
     html += calcLinea("Margen de error", "+" + Math.round(r.margenErrorPct * 100) + "% sobre costos", r.margenErrorMonto, "+");
@@ -1123,8 +1622,8 @@
 
   document
     .querySelectorAll(
-      "#calc-potencia, #calc-vida-util, #calc-costo-reposicion, #calc-precio-filamento, #calc-costo-electricidad, " +
-        "#calc-horas, #calc-minutos, #calc-peso, #calc-margen-ganancia, #calc-accesorio, #calc-acabados"
+      "#calc-potencia, #calc-vida-util, #calc-costo-reposicion, #calc-costo-electricidad, " +
+        "#calc-horas, #calc-minutos, #calc-margen-ganancia, #calc-accesorio, #calc-acabados"
     )
     .forEach((el) => el.addEventListener("input", renderResultados));
 
@@ -1132,6 +1631,101 @@
     document.getElementById("calc-margen-error-label").textContent = e.target.value + "%";
     renderResultados();
   });
+
+  /* ---- Filamentos de la pieza (una fila por filamento: elegir + gramos) ---- */
+  function defaultFilRow() {
+    return { filamento_id: "", gramos: 50, precio_kg: 700 };
+  }
+
+  function renderCalcFilRows() {
+    const wrap = document.getElementById("calc-filamentos-rows");
+    if (!calcFilRows.length) calcFilRows = [defaultFilRow()];
+    const opciones =
+      '<option value="">Manual (escribo el precio por kg)</option>' +
+      filamentosCache
+        .map(
+          (f) =>
+            '<option value="' + f.id + '">' + escHtml(filamentoNombre(f)) + " · " + escHtml(fmtMoney(precioKgDe(f))) + "/kg" +
+            (f.disponible === false ? " · sin stock" : "") + "</option>"
+        )
+        .join("");
+    wrap.innerHTML = calcFilRows
+      .map(
+        (r, i) =>
+          '<div class="fil-row" data-i="' + i + '"><select data-k="filamento_id">' + opciones + "</select>" +
+          '<input type="number" min="0" step="1" data-k="gramos" placeholder="gramos" value="' + escHtml(r.gramos) + '">' +
+          '<input type="number" min="0" step="1" data-k="precio_kg" placeholder="$U / kg" value="' + escHtml(r.precio_kg) + '"' +
+          (r.filamento_id ? " readonly" : "") + ">" +
+          '<button type="button" class="row-del" data-del="' + i + '" aria-label="Quitar filamento">✕</button></div>'
+      )
+      .join("");
+    wrap.querySelectorAll(".fil-row").forEach((rowEl) => {
+      rowEl.querySelector("select").value = calcFilRows[Number(rowEl.dataset.i)].filamento_id || "";
+    });
+  }
+
+  // Un solo juego de listeners en el contenedor (las filas se redibujan solas).
+  (function initCalcFilRows() {
+    const wrap = document.getElementById("calc-filamentos-rows");
+    wrap.addEventListener("input", (e) => {
+      const rowEl = e.target.closest(".fil-row");
+      const key = e.target.dataset && e.target.dataset.k;
+      if (!rowEl || (key !== "gramos" && key !== "precio_kg")) return;
+      calcFilRows[Number(rowEl.dataset.i)][key] = e.target.value;
+      renderResultados();
+    });
+    wrap.addEventListener("change", (e) => {
+      const rowEl = e.target.closest(".fil-row");
+      if (!rowEl || !e.target.matches('select[data-k="filamento_id"]')) return;
+      const row = calcFilRows[Number(rowEl.dataset.i)];
+      const f = filamentosCache.find((x) => x.id === e.target.value);
+      row.filamento_id = f ? f.id : "";
+      if (f) row.precio_kg = Math.round(precioKgDe(f) * 100) / 100;
+      syncMaterialDesdeFilamentos();
+      renderCalcFilRows();
+      renderResultados();
+    });
+    wrap.addEventListener("click", (e) => {
+      const del = e.target.closest("[data-del]");
+      if (!del) return;
+      calcFilRows.splice(Number(del.dataset.del), 1);
+      renderCalcFilRows();
+      syncMaterialDesdeFilamentos();
+      renderResultados();
+    });
+    document.getElementById("calc-add-filamento").addEventListener("click", () => {
+      calcFilRows.push({ filamento_id: "", gramos: 20, precio_kg: 700 });
+      renderCalcFilRows();
+      renderResultados();
+    });
+  })();
+
+  /* El "Material" de la cotización se completa solo con el tipo de los
+     filamentos elegidos (ej. "PLA" o "PLA + PETG"). Si no se eligió ninguno de
+     la lista queda lo que esté seleccionado a mano. */
+  function setMaterialSelect(value) {
+    const sel = document.getElementById("calc-material");
+    if (!Array.from(sel.options).some((o) => o.value === value)) {
+      const opt = document.createElement("option");
+      opt.textContent = value;
+      opt.dataset.extra = "1";
+      sel.appendChild(opt);
+    }
+    sel.value = value;
+  }
+  function resetMaterialSelect() {
+    const sel = document.getElementById("calc-material");
+    sel.querySelectorAll("option[data-extra]").forEach((o) => o.remove());
+    sel.value = "PLA";
+  }
+  function syncMaterialDesdeFilamentos() {
+    const materiales = [];
+    calcFilRows.forEach((r) => {
+      const f = filamentosCache.find((x) => x.id === r.filamento_id);
+      if (f && f.material && !materiales.includes(f.material)) materiales.push(f.material);
+    });
+    if (materiales.length) setMaterialSelect(materiales.join(" + "));
+  }
 
   /* ---- Selector de máquina ---- */
   function fillMaquinaSelect() {
@@ -1152,20 +1746,23 @@
     renderResultados();
   });
 
-  /* ---- Limpiar ---- */
+  /* ---- Limpiar (también cancela una edición en curso) ---- */
   document.getElementById("calc-limpiar-btn").addEventListener("click", () => {
+    editingCotizacionId = null;
+    document.getElementById("calc-guardar-btn").textContent = "Guardar cotización";
+    document.getElementById("calc-editing-label").textContent = "";
     document.getElementById("calc-maquina").value = "";
     document.getElementById("calc-potencia").value = 200;
     document.getElementById("calc-vida-util").value = 5000;
     document.getElementById("calc-costo-reposicion").value = 0;
-    document.getElementById("calc-precio-filamento").value = 700;
     document.getElementById("calc-costo-electricidad").value = 10;
     document.getElementById("calc-nombre-pieza").value = "";
     document.getElementById("calc-cliente").value = "";
     document.getElementById("calc-horas").value = 0;
     document.getElementById("calc-minutos").value = 30;
-    document.getElementById("calc-peso").value = 50;
-    document.getElementById("calc-material").value = "PLA";
+    calcFilRows = [defaultFilRow()];
+    renderCalcFilRows();
+    resetMaterialSelect();
     document.getElementById("calc-margen-error").value = 35;
     document.getElementById("calc-margen-error-label").textContent = "35%";
     document.getElementById("calc-margen-ganancia").value = 2;
@@ -1199,6 +1796,7 @@
         vida_util_horas: r.vidaUtilHoras,
         costo_reposicion: r.costoReposicion,
         precio_filamento_kg: r.precioFilamento,
+        filamentos: r.filamentos,
         costo_electricidad_kwh: r.costoElectricidadKwh,
         horas_impresion: r.horasImpresion,
         minutos_adicionales: r.minutosAdicionales,
@@ -1223,8 +1821,17 @@
       total_a_cobrar: r.totalACobrar,
     };
 
-    const { error } = await stratoSb.from("cotizaciones").insert([payload]);
+    let error;
+    if (editingCotizacionId) {
+      ({ error } = await stratoSb.from("cotizaciones").update(payload).eq("id", editingCotizacionId));
+    } else {
+      ({ error } = await stratoSb.from("cotizaciones").insert([payload]));
+    }
     if (error) { errEl.textContent = error.message; return; }
+
+    editingCotizacionId = null;
+    document.getElementById("calc-guardar-btn").textContent = "Guardar cotización";
+    document.getElementById("calc-editing-label").textContent = "";
 
     await loadCotizaciones();
     renderCotizaciones();
@@ -1236,16 +1843,71 @@
     tbody.innerHTML = cotizacionesCache
       .map((c) => {
         const gp = c.resultados && c.resultados.ganancia_pct != null ? c.resultados.ganancia_pct.toFixed(1) + "%" : "—";
+        const costoBase = c.resultados && c.resultados.costo_base != null ? fmtMoney(c.resultados.costo_base) : "—";
         return (
           "<tr><td>" + fmtFecha(c.created_at) + "</td><td>" + escHtml(c.nombre_pieza) + "</td><td>" +
           escHtml(c.cliente || "—") + "</td><td>" + escHtml(c.maquina_nombre || "—") + "</td><td>" +
-          fmtMoney(c.total_a_cobrar) + "</td><td>" + gp +
-          "</td><td><button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarCotizacion('" +
+          costoBase + "</td><td>" + fmtMoney(c.total_a_cobrar) + "</td><td>" + gp +
+          "</td><td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarCotizacion('" +
+          c.id + "')\">Editar</button> <button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarCotizacion('" +
           c.id + "')\">Eliminar</button></td></tr>"
         );
       })
       .join("");
   }
+
+  window.stratoAdminEditarCotizacion = function (id) {
+    const c = cotizacionesCache.find((x) => x.id === id);
+    if (!c) return;
+    editingCotizacionId = id;
+    const inp = c.inputs || {};
+
+    // El historial guarda el nombre de la máquina usada, no su id — intentamos
+    // volver a seleccionarla en el desplegable comparando por nombre; si no
+    // matchea (se borró, o era carga manual), queda en "Manual" y los valores
+    // de potencia/vida útil/costo de reposición igual se cargan de `inputs`.
+    const maquinaSel = document.getElementById("calc-maquina");
+    const match = maquinasCache.find((m) => m.nombre + " (" + m.potencia_w + " W)" === c.maquina_nombre);
+    maquinaSel.value = match ? match.id : "";
+
+    document.getElementById("calc-potencia").value = inp.potencia_w ?? 200;
+    document.getElementById("calc-vida-util").value = inp.vida_util_horas ?? 5000;
+    document.getElementById("calc-costo-reposicion").value = inp.costo_reposicion ?? 0;
+    document.getElementById("calc-costo-electricidad").value = inp.costo_electricidad_kwh ?? 10;
+    document.getElementById("calc-nombre-pieza").value = c.nombre_pieza || "";
+    document.getElementById("calc-cliente").value = c.cliente || "";
+    document.getElementById("calc-horas").value = inp.horas_impresion ?? 0;
+    document.getElementById("calc-minutos").value = inp.minutos_adicionales ?? 30;
+    // Filamentos: las cotizaciones nuevas guardan el detalle fila por fila; las
+    // viejas solo tienen peso total + precio por kg, que se cargan como una fila manual.
+    // Se conserva el precio por kg que se usó entonces (puede haber cambiado desde).
+    if (Array.isArray(inp.filamentos) && inp.filamentos.length) {
+      calcFilRows = inp.filamentos.map((f) => ({
+        filamento_id: f.filamento_id && filamentosCache.some((x) => x.id === f.filamento_id) ? f.filamento_id : "",
+        gramos: f.gramos ?? 0,
+        precio_kg: f.precio_kg ?? 700,
+      }));
+    } else {
+      calcFilRows = [{ filamento_id: "", gramos: inp.peso_gr ?? 50, precio_kg: inp.precio_filamento_kg ?? 700 }];
+    }
+    renderCalcFilRows();
+    setMaterialSelect(c.material_nombre || "PLA");
+    const margenErrorPctVal = Math.round((inp.margen_error_pct ?? 0.35) * 100);
+    document.getElementById("calc-margen-error").value = margenErrorPctVal;
+    document.getElementById("calc-margen-error-label").textContent = margenErrorPctVal + "%";
+    document.getElementById("calc-margen-ganancia").value = inp.margen_ganancia ?? 2;
+    document.getElementById("calc-accesorio").value = inp.costo_accesorio ?? 0;
+    document.getElementById("calc-acabados").value = inp.costo_acabados ?? 0;
+    document.getElementById("calc-altura-capa").value = inp.altura_capa ?? "0.20";
+    document.getElementById("calc-relleno").value = inp.relleno_pct ?? 20;
+
+    document.getElementById("calc-guardar-btn").textContent = "Guardar cambios";
+    document.getElementById("calc-editing-label").textContent = "— editando cotización guardada";
+    document.getElementById("calc-error").textContent = "";
+
+    renderResultados();
+    document.getElementById("panel-calculadora").scrollIntoView({ behavior: "smooth" });
+  };
 
   window.stratoAdminEliminarCotizacion = async function (id) {
     if (!confirm("¿Eliminar esta cotización del historial?")) return;

@@ -101,6 +101,7 @@ function stratoProductCard(product, index) {
     '<h3 class="product-card__title">' +
     product.name +
     "</h3>" +
+    (stratoProductTiers(product).length ? '<div class="product-card__bulk">Descuento por cantidad</div>' : "") +
     '<div class="product-card__foot">' +
     '<span class="product-card__price">' +
     priceText +
@@ -125,7 +126,14 @@ function stratoRenderGrid(containerId, list) {
 }
 
 function stratoQuickAdd(id) {
-  stratoAddToCart(id, 1, null);
+  const product = STRATO_PRODUCTS.find((p) => p.id === id);
+  // Con tamaños el cliente tiene que elegir uno (cada uno tiene su precio):
+  // en vez de agregar a ciegas, se abre la ficha del producto.
+  if (product && product.sizes && product.sizes.length) {
+    stratoOpenProduct(id);
+    return;
+  }
+  stratoAddToCart(id, 1, null, null);
 }
 
 /* ---- Barra de filtros del catálogo + lista "Categorías" del footer.
@@ -238,6 +246,61 @@ function stratoInitFeatured() {
 /* ---- Lightbox de producto ---- */
 let stratoCurrentProduct = null;
 
+/* Los bloques nuevos de la ficha (tamaños, descuentos por cantidad, total y
+   cantidad editable) se crean desde acá en vez de estar escritos en cada
+   HTML: así index.html y catalogo.html no necesitan cambios cada vez que la
+   ficha suma algo, y no se pueden desincronizar entre sí. */
+function stratoEnsureLightboxExtras() {
+  const colors = document.getElementById("lbColors");
+  if (!colors) return;
+
+  if (!document.getElementById("lbSizes")) {
+    const d = document.createElement("div");
+    d.id = "lbSizes";
+    d.className = "lightbox__sizes";
+    colors.parentNode.insertBefore(d, colors);
+  }
+  if (!document.getElementById("lbTiers")) {
+    const d = document.createElement("div");
+    d.id = "lbTiers";
+    d.className = "lightbox__tiers";
+    colors.parentNode.insertBefore(d, colors);
+  }
+
+  // Cantidad: el <span> de siempre pasa a ser un campo numérico (se puede
+  // escribir 50 o 100 directamente en vez de apretar "+" muchas veces).
+  const qtyEl = document.getElementById("lbQty");
+  if (qtyEl && qtyEl.tagName !== "INPUT") {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.id = "lbQty";
+    input.className = "lightbox__qty-input";
+    input.min = "1";
+    input.max = "9999";
+    input.value = "1";
+    input.setAttribute("aria-label", "Cantidad");
+    qtyEl.replaceWith(input);
+    input.addEventListener("input", () => {
+      const lightbox = document.getElementById("productLightbox");
+      let qty = parseInt(input.value, 10);
+      if (isNaN(qty) || qty < 1) qty = 1;
+      lightbox.dataset.qty = Math.min(qty, 9999);
+      stratoRefreshLightboxPrice();
+    });
+    input.addEventListener("change", () => {
+      input.value = document.getElementById("productLightbox").dataset.qty || "1";
+    });
+  }
+
+  const qtyRow = document.querySelector("#productLightbox .lightbox__qty");
+  if (qtyRow && !document.getElementById("lbTotal")) {
+    const t = document.createElement("span");
+    t.id = "lbTotal";
+    t.className = "lightbox__total";
+    qtyRow.appendChild(t);
+  }
+}
+
 function stratoOpenProduct(id) {
   const product = STRATO_PRODUCTS.find((p) => p.id === id);
   if (!product) return;
@@ -247,6 +310,7 @@ function stratoOpenProduct(id) {
     return;
   }
   stratoCurrentProduct = product;
+  stratoEnsureLightboxExtras();
 
   document.getElementById("lbMedia").innerHTML = stratoGalleryHtml(product);
   document.getElementById("lbCat").textContent = stratoCategoryNames(product);
@@ -259,17 +323,161 @@ function stratoOpenProduct(id) {
   stratoResetLightboxDesc();
   document.getElementById("lbMaterial").textContent = "Material: " + product.material;
 
-  stratoRenderLightboxColors(product, lightbox);
-
   lightbox.dataset.qty = "1";
-  document.getElementById("lbQty").textContent = "1";
+  const qtyEl = document.getElementById("lbQty");
+  if (qtyEl) qtyEl.value = "1";
+  lightbox.dataset.size = product.sizes && product.sizes.length ? product.sizes[0].name : "";
+  // Con tamaños o descuentos hay más cosas que mostrar: el cuadro se hace un poco más alto.
+  lightbox.classList.toggle("lightbox--rich", !!(product.sizes && product.sizes.length) || stratoProductTiers(product).length > 0);
+
+  stratoRenderLightboxSizes(product, lightbox);
+  stratoRenderLightboxColors(product, lightbox);
+  stratoRefreshLightboxPrice();
 
   lightbox.classList.add("open");
   document.body.style.overflow = "hidden";
 }
 
+/* ---- Tamaños: botones con el nombre y el precio de cada uno. ---- */
+function stratoRenderLightboxSizes(product, lightbox) {
+  const wrap = document.getElementById("lbSizes");
+  if (!wrap) return;
+  const sizes = product.sizes || [];
+  wrap.innerHTML = "";
+  if (!sizes.length) {
+    wrap.style.display = "none";
+    return;
+  }
+  wrap.style.display = "";
+  const label = document.createElement("div");
+  label.className = "lightbox__field-label";
+  label.textContent = "Tamaño";
+  wrap.appendChild(label);
+
+  const row = document.createElement("div");
+  row.className = "size-pills";
+  sizes.forEach((sz) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "size-pill" + (sz.name === lightbox.dataset.size ? " active" : "");
+    btn.innerHTML = '<span class="size-pill__name">' + stratoEsc(sz.name) + '</span><span class="size-pill__price">' + stratoMoney(sz.price) + "</span>";
+    btn.addEventListener("click", () => {
+      lightbox.dataset.size = sz.name;
+      row.querySelectorAll(".size-pill").forEach((b) => b.classList.toggle("active", b === btn));
+      stratoRefreshLightboxPrice();
+    });
+    row.appendChild(btn);
+  });
+  wrap.appendChild(row);
+}
+
+/* Unidades de este producto que ya hay en el carrito (en cualquier color o
+   tamaño): se suman a la cantidad de la ficha para calcular el escalón, igual
+   que va a hacer el carrito. */
+function stratoUnitsInCart(productId) {
+  return stratoGetCart()
+    .filter((l) => l.id === productId)
+    .reduce((sum, l) => sum + l.qty, 0);
+}
+
+/* Redibuja precio, tabla de descuentos y total de la ficha según el tamaño y
+   la cantidad elegidos. Un producto simple (sin tamaños ni descuentos) se ve
+   exactamente igual que antes: solo el precio. */
+function stratoRefreshLightboxPrice() {
+  const product = stratoCurrentProduct;
+  const lightbox = document.getElementById("productLightbox");
+  if (!product || !lightbox) return;
+
+  const qty = Math.max(1, parseInt(lightbox.dataset.qty || "1", 10) || 1);
+  const size = lightbox.dataset.size || null;
+  const base = stratoBasePrice(product, size);
+  const tiers = stratoProductTiers(product);
+  const inCart = tiers.length ? stratoUnitsInCart(product.id) : 0;
+  const tier = stratoTierFor(product, inCart + qty);
+  const unit = base == null ? null : tier ? Math.round(base * (1 - tier.pct / 100)) : base;
+
+  const priceEl = document.getElementById("lbPrice");
+  if (base == null) {
+    priceEl.textContent = stratoFormatPrice(product);
+  } else if (!(product.sizes && product.sizes.length) && !tiers.length) {
+    priceEl.textContent = stratoFormatPrice(product);
+  } else if (tier) {
+    priceEl.innerHTML =
+      stratoMoney(unit) + ' <span class="lightbox__unit">c/u</span> <s class="lightbox__price-old">' + stratoMoney(base) +
+      '</s> <span class="lightbox__disc">-' + tier.pct + "%</span>";
+  } else {
+    priceEl.innerHTML = stratoMoney(base) + (tiers.length ? ' <span class="lightbox__unit">c/u</span>' : "");
+  }
+
+  // Tabla de descuentos: cada botón lleva la cantidad a ese escalón.
+  const tiersEl = document.getElementById("lbTiers");
+  if (tiersEl) {
+    if (!tiers.length || base == null) {
+      tiersEl.innerHTML = "";
+      tiersEl.style.display = "none";
+    } else {
+      tiersEl.style.display = "";
+      let html = '<div class="lightbox__field-label">Descuento por cantidad</div><div class="tier-chips">';
+      html += stratoTierChip(1, base, 0, !tier);
+      tiers.forEach((t) => {
+        html += stratoTierChip(t.from, Math.round(base * (1 - t.pct / 100)), t.pct, !!tier && tier.from === t.from);
+      });
+      html += "</div>";
+      if (inCart > 0) html += '<div class="lightbox__tiers-note">Ya tenés ' + inCart + " en el carrito: se suman para el descuento.</div>";
+      tiersEl.innerHTML = html;
+      tiersEl.querySelectorAll(".tier-chip").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const target = Math.max(1, parseInt(btn.dataset.from, 10) - inCart);
+          lightbox.dataset.qty = String(target);
+          document.getElementById("lbQty").value = String(target);
+          stratoRefreshLightboxPrice();
+        });
+      });
+    }
+  }
+
+  const totalEl = document.getElementById("lbTotal");
+  if (totalEl) {
+    if (unit != null && (qty > 1 || tiers.length)) {
+      totalEl.innerHTML = 'Total <strong>' + stratoMoney(unit * qty) + "</strong>";
+      totalEl.style.display = "";
+    } else {
+      totalEl.textContent = "";
+      totalEl.style.display = "none";
+    }
+  }
+}
+
+function stratoTierChip(from, unitPrice, pct, active) {
+  return (
+    '<button type="button" class="tier-chip' + (active ? " active" : "") + '" data-from="' + from + '">' +
+    '<span class="tier-chip__qty">' + (from === 1 ? "1 un." : from + "+ un.") + "</span>" +
+    '<span class="tier-chip__price">' + stratoMoney(unitPrice) + (pct ? " · -" + pct + "%" : "") + "</span>" +
+    "</button>"
+  );
+}
+
+/* ---- Colores. Vienen del admin (pestaña Filamentos): se ocultan los que
+   están marcados "sin stock" y, si el filamento tiene código de color, se
+   muestra un circulito al lado del nombre. ---- */
+function stratoFilamentFor(colorName) {
+  const key = String(colorName || "").trim().toLowerCase();
+  return STRATO_FILAMENTS.find((f) => String(f.color || "").trim().toLowerCase() === key) || null;
+}
+
+function stratoColorAvailable(colorName) {
+  const f = stratoFilamentFor(colorName);
+  return !f || f.available !== false;
+}
+
+function stratoColorDotHtml(colorName) {
+  const f = stratoFilamentFor(colorName);
+  if (!f || !f.hex || !/^#[0-9a-fA-F]{3,8}$/.test(f.hex)) return "";
+  return '<span class="color-dot" style="background:' + f.hex + '"></span>';
+}
+
 /* ---- Selector de color del lightbox: la mayoría de los productos permite
-   un solo color (menú desplegable normal), pero un producto puede marcarse
+   un solo color (menú desplegable), pero un producto puede marcarse
    en el admin para permitir elegir varios a la vez (desplegable con
    casilleros). En ambos casos el resultado termina en lightbox.dataset.color
    como un string plano — con varios colores marcados queda algo como
@@ -278,13 +486,19 @@ function stratoOpenProduct(id) {
 function stratoRenderLightboxColors(product, lightbox) {
   const wrap = document.getElementById("lbColors");
   wrap.innerHTML = "";
-  const colors = product.colors || [];
+  const all = product.colors || [];
+  const colors = all.filter(stratoColorAvailable);
   if (!colors.length) {
     lightbox.dataset.color = "";
+    if (all.length) {
+      wrap.innerHTML = '<p class="muted" style="font-size:0.82rem;margin:0;">Colores sin stock por el momento. Escribinos por WhatsApp y lo coordinamos.</p>';
+    }
     return;
   }
   if (product.colorsMultiple) {
     stratoRenderColorMultiSelect(wrap, colors, lightbox);
+  } else if (colors.some((c) => stratoColorDotHtml(c))) {
+    stratoRenderColorSingleSwatch(wrap, colors, lightbox);
   } else {
     stratoRenderColorDropdown(wrap, colors, lightbox);
   }
@@ -305,6 +519,45 @@ function stratoRenderColorDropdown(wrap, colors, lightbox) {
   });
   wrap.appendChild(select);
   lightbox.dataset.color = colors[0];
+}
+
+/* Un solo color, con circulito: un select nativo no puede dibujar el color,
+   así que se arma un desplegable propio con el mismo aspecto que el de varios. */
+function stratoRenderColorSingleSwatch(wrap, colors, lightbox) {
+  const box = document.createElement("div");
+  box.className = "color-multiselect color-single";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "color-multiselect__btn";
+  btn.setAttribute("aria-label", "Color");
+  const panel = document.createElement("div");
+  panel.className = "color-multiselect__panel";
+
+  function choose(c) {
+    lightbox.dataset.color = c;
+    btn.innerHTML = '<span class="color-multiselect__label">' + stratoColorDotHtml(c) + stratoEsc(c) + "</span>";
+    panel.querySelectorAll(".color-multiselect__row").forEach((r) => r.classList.toggle("selected", r.dataset.color === c));
+    box.classList.remove("open");
+  }
+
+  colors.forEach((c) => {
+    const row = document.createElement("div");
+    row.className = "color-multiselect__row";
+    row.dataset.color = c;
+    row.innerHTML = stratoColorDotHtml(c) + stratoEsc(c);
+    row.addEventListener("click", () => choose(c));
+    panel.appendChild(row);
+  });
+
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    box.classList.toggle("open");
+  });
+
+  box.appendChild(btn);
+  box.appendChild(panel);
+  wrap.appendChild(box);
+  choose(colors[0]);
 }
 
 function stratoRenderColorMultiSelect(wrap, colors, lightbox) {
@@ -334,6 +587,8 @@ function stratoRenderColorMultiSelect(wrap, colors, lightbox) {
       syncLabel();
     });
     row.appendChild(cb);
+    const dot = stratoColorDotHtml(c);
+    if (dot) row.insertAdjacentHTML("beforeend", dot);
     row.appendChild(document.createTextNode(" " + c));
     panel.appendChild(row);
   });
@@ -350,7 +605,7 @@ function stratoRenderColorMultiSelect(wrap, colors, lightbox) {
 }
 
 // Un único listener delegado (no uno por lightbox abierto) que cierra el
-// desplegable de varios colores al tocar afuera.
+// desplegable de colores al tocar afuera.
 document.addEventListener("click", (e) => {
   const openBox = document.querySelector(".color-multiselect.open");
   if (openBox && !openBox.contains(e.target)) openBox.classList.remove("open");
@@ -399,16 +654,19 @@ function stratoChangeQty(delta) {
   const lightbox = document.getElementById("productLightbox");
   let qty = parseInt(lightbox.dataset.qty || "1", 10) + delta;
   if (qty < 1) qty = 1;
+  if (qty > 9999) qty = 9999;
   lightbox.dataset.qty = qty;
-  document.getElementById("lbQty").textContent = qty;
+  document.getElementById("lbQty").value = qty;
+  stratoRefreshLightboxPrice();
 }
 
 function stratoAddCurrentToCart() {
   const lightbox = document.getElementById("productLightbox");
   if (!stratoCurrentProduct) return;
-  const qty = parseInt(lightbox.dataset.qty || "1", 10);
+  const qty = Math.max(1, parseInt(lightbox.dataset.qty || "1", 10) || 1);
   const color = lightbox.dataset.color || null;
-  stratoAddToCart(stratoCurrentProduct.id, qty, color);
+  const size = lightbox.dataset.size || null;
+  stratoAddToCart(stratoCurrentProduct.id, qty, color, size);
   stratoCloseProduct();
   stratoOpenCart();
 }

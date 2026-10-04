@@ -38,51 +38,65 @@ function stratoSaveCart(cart) {
   stratoUpdateCartCount();
 }
 
-function stratoLineKey(productId, color) {
-  return productId + "::" + (color || "default");
+/* La "línea" del carrito es producto + color + tamaño: el mismo producto en
+   dos tamaños (o dos colores) distintos son líneas separadas. */
+function stratoLineKey(productId, color, size) {
+  return productId + "::" + (color || "default") + "::" + (size || "default");
 }
 
-function stratoAddToCart(productId, qty, color) {
+function stratoAddToCart(productId, qty, color, size) {
   const cart = stratoGetCart();
-  const key = stratoLineKey(productId, color);
-  const existing = cart.find((l) => stratoLineKey(l.id, l.color) === key);
+  const key = stratoLineKey(productId, color, size);
+  const existing = cart.find((l) => stratoLineKey(l.id, l.color, l.size) === key);
   if (existing) {
     existing.qty += qty;
   } else {
-    cart.push({ id: productId, qty: qty, color: color || null, note: "" });
+    cart.push({ id: productId, qty: qty, color: color || null, size: size || null, note: "" });
   }
   stratoSaveCart(cart);
   stratoRenderCartDrawer();
   stratoShowToast("Agregado al carrito");
 }
 
-function stratoUpdateLineQty(productId, color, qty) {
+/* Las funciones "ByKey" son las que usa el drawer: identifican la línea por
+   su clave (producto + color + tamaño), así no hay que meter textos con
+   comillas dentro de atributos onclick. */
+function stratoUpdateLineQtyByKey(key, qty) {
   let cart = stratoGetCart();
-  const key = stratoLineKey(productId, color);
   if (qty <= 0) {
-    cart = cart.filter((l) => stratoLineKey(l.id, l.color) !== key);
+    cart = cart.filter((l) => stratoLineKey(l.id, l.color, l.size) !== key);
   } else {
-    const line = cart.find((l) => stratoLineKey(l.id, l.color) === key);
+    const line = cart.find((l) => stratoLineKey(l.id, l.color, l.size) === key);
     if (line) line.qty = qty;
   }
   stratoSaveCart(cart);
   stratoRenderCartDrawer();
 }
 
-function stratoRemoveLine(productId, color) {
-  stratoUpdateLineQty(productId, color, 0);
+function stratoRemoveLineByKey(key) {
+  stratoUpdateLineQtyByKey(key, 0);
 }
 
 /* Observación puntual de ese producto en el carrito (ej. aclarar un color,
    un detalle del pedido). Guarda sin re-dibujar el drawer, para no perder
    el foco/cursor mientras el cliente está escribiendo. */
-function stratoSetLineNote(productId, color, note) {
+function stratoSetLineNoteByKey(key, note) {
   const cart = stratoGetCart();
-  const key = stratoLineKey(productId, color);
-  const line = cart.find((l) => stratoLineKey(l.id, l.color) === key);
+  const line = cart.find((l) => stratoLineKey(l.id, l.color, l.size) === key);
   if (!line) return;
   line.note = note;
   stratoSaveCart(cart);
+}
+
+/* Versiones anteriores (producto + color): se mantienen por compatibilidad. */
+function stratoUpdateLineQty(productId, color, qty, size) {
+  stratoUpdateLineQtyByKey(stratoLineKey(productId, color, size), qty);
+}
+function stratoRemoveLine(productId, color, size) {
+  stratoUpdateLineQtyByKey(stratoLineKey(productId, color, size), 0);
+}
+function stratoSetLineNote(productId, color, note, size) {
+  stratoSetLineNoteByKey(stratoLineKey(productId, color, size), note);
 }
 
 function stratoClearCart() {
@@ -130,26 +144,104 @@ function stratoQuitarCupon() {
   stratoRenderCartDrawer();
 }
 
+/* ---- Precios: tamaño elegido + descuento por cantidad ----
+   Un producto puede tener tamaños (cada uno con su precio) y/o descuento por
+   cantidad (escalones "desde N unidades, X%"). El escalón se decide por el
+   TOTAL de unidades de ese producto en el carrito, sumando todos sus colores
+   y tamaños. El precio unitario con descuento se redondea al peso: es el
+   mismo número que se muestra, que se cobra por Mercado Pago y que se
+   guarda en el pedido. */
+function stratoProductTiers(product) {
+  if (!product || !product.byQuantity) return [];
+  const own = product.ownTiers && product.ownTiers.length ? product.ownTiers : null;
+  return (own || STRATO_TIERS).slice().sort((a, b) => a.from - b.from);
+}
+
+/* Escalón que corresponde a esa cantidad total: {from, pct}, o null si no llega a ninguno. */
+function stratoTierFor(product, totalQty) {
+  let hit = null;
+  stratoProductTiers(product).forEach((t) => {
+    if (totalQty >= t.from) hit = t;
+  });
+  return hit;
+}
+
+/* Tamaño elegido (si el nombre guardado ya no existe, cae al primero). null si el producto no tiene tamaños. */
+function stratoFindSize(product, sizeName) {
+  const sizes = (product && product.sizes) || [];
+  if (!sizes.length) return null;
+  return sizes.find((s) => s.name === sizeName) || sizes[0];
+}
+
+/* Precio de lista de UNA unidad, sin descuento por cantidad. null = a cotizar. */
+function stratoBasePrice(product, sizeName) {
+  const size = stratoFindSize(product, sizeName);
+  if (size) return size.price;
+  return product.price == null ? null : product.price;
+}
+
+function stratoUnitPrice(product, sizeName, totalQty) {
+  const base = stratoBasePrice(product, sizeName);
+  if (base == null) return null;
+  const tier = stratoTierFor(product, totalQty);
+  return tier ? Math.round(base * (1 - tier.pct / 100)) : base;
+}
+
 function stratoCartDetailed() {
-  const cart = stratoGetCart();
-  return cart
+  const lines = stratoGetCart()
     .map((line) => {
       const product = STRATO_PRODUCTS.find((p) => p.id === line.id);
       if (!product) return null;
       return Object.assign({}, line, { product: product });
     })
     .filter(Boolean);
+
+  const totalByProduct = {};
+  lines.forEach((l) => {
+    totalByProduct[l.id] = (totalByProduct[l.id] || 0) + l.qty;
+  });
+
+  lines.forEach((l) => {
+    const size = stratoFindSize(l.product, l.size);
+    const tier = stratoTierFor(l.product, totalByProduct[l.id]);
+    l.key = stratoLineKey(l.id, l.color, l.size);
+    l.sizeName = size ? size.name : null; // nombre ya validado contra el producto actual
+    l.productQty = totalByProduct[l.id];
+    l.pct = tier ? tier.pct : 0;
+    l.unitBase = stratoBasePrice(l.product, l.size);
+    l.unit = l.unitBase == null ? null : tier ? Math.round(l.unitBase * (1 - tier.pct / 100)) : l.unitBase;
+    l.lineBase = l.unitBase == null ? null : l.unitBase * l.qty;
+    l.lineTotal = l.unit == null ? null : l.unit * l.qty;
+  });
+  return lines;
 }
 
 function stratoCartCount() {
   return stratoGetCart().reduce((sum, l) => sum + l.qty, 0);
 }
 
+/* Suma a precio de lista, antes de cualquier descuento. */
+function stratoCartListSubtotal() {
+  return stratoCartDetailed().reduce((sum, l) => sum + (l.lineBase || 0), 0);
+}
+
+/* Subtotal ya con el descuento por cantidad aplicado (sobre esto se calcula el cupón). */
 function stratoCartSubtotal() {
-  return stratoCartDetailed().reduce((sum, l) => {
-    const price = l.product.price || 0;
-    return sum + price * l.qty;
-  }, 0);
+  return stratoCartDetailed().reduce((sum, l) => sum + (l.lineTotal || 0), 0);
+}
+
+/* Cuánto se ahorra el cliente por comprar en cantidad. */
+function stratoCartVolumeDiscount() {
+  return Math.max(0, stratoCartListSubtotal() - stratoCartSubtotal());
+}
+
+/* Texto "Chico · Negro" que describe la variante de una línea. */
+function stratoLineVariantText(line) {
+  return [line.sizeName, line.color || line.product.material].filter(Boolean).join(" · ");
+}
+
+function stratoEsc(str) {
+  return String(str == null ? "" : str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function stratoUpdateCartCount() {
@@ -198,56 +290,36 @@ function stratoRenderCartDrawer() {
   itemsEl.innerHTML = lines
     .map((line, i) => {
       const p = line.product;
-      const priceText = p.price != null ? "$U " + (p.price * line.qty).toLocaleString("es-UY") : p.priceLabel || "Cotizar";
+      let priceHtml;
+      if (line.lineTotal == null) {
+        priceHtml = stratoEsc(p.priceLabel || "Cotizar");
+      } else {
+        priceHtml = "$U " + line.lineTotal.toLocaleString("es-UY");
+        if (line.pct > 0) {
+          priceHtml =
+            '<s class="cart-item__price-old">$U ' + line.lineBase.toLocaleString("es-UY") + "</s><br>" +
+            priceHtml +
+            '<span class="cart-item__disc">-' + line.pct + "% por cantidad</span>";
+        }
+      }
       return (
-        '<div class="cart-item">' +
-        '<div class="cart-item__thumb">' +
-        stratoProductMedia(p, i) +
-        "</div>" +
+        '<div class="cart-item" data-key="' + stratoEsc(line.key) + '">' +
+        '<div class="cart-item__thumb">' + stratoProductMedia(p, i) + "</div>" +
         "<div>" +
-        '<div class="cart-item__title">' +
-        p.name +
-        "</div>" +
-        '<div class="cart-item__meta">' +
-        (line.color ? line.color : p.material) +
-        "</div>" +
+        '<div class="cart-item__title">' + stratoEsc(p.name) + "</div>" +
+        '<div class="cart-item__meta">' + stratoEsc(stratoLineVariantText(line)) + "</div>" +
         '<div class="cart-item__qty">' +
-        '<button onclick="stratoUpdateLineQty(\'' +
-        p.id +
-        "', " +
-        (line.color ? "'" + line.color + "'" : "null") +
-        ", " +
-        (line.qty - 1) +
-        ')">–</button>' +
-        "<span>" +
-        line.qty +
-        "</span>" +
-        '<button onclick="stratoUpdateLineQty(\'' +
-        p.id +
-        "', " +
-        (line.color ? "'" + line.color + "'" : "null") +
-        ", " +
-        (line.qty + 1) +
-        ')">+</button>' +
+        '<button type="button" data-act="dec" aria-label="Menos">–</button>' +
+        '<input type="number" class="cart-item__qty-input" data-act="qty" min="1" max="9999" value="' + line.qty + '" aria-label="Cantidad">' +
+        '<button type="button" data-act="inc" aria-label="Más">+</button>' +
         "</div>" +
-        '<a class="cart-item__remove" onclick="stratoRemoveLine(\'' +
-        p.id +
-        "', " +
-        (line.color ? "'" + line.color + "'" : "null") +
-        ')">Quitar</a>' +
+        '<a class="cart-item__remove" data-act="remove">Quitar</a>' +
         '<div class="cart-item__note">' +
-        '<input type="text" class="cart-item__note-input" placeholder="Observación (color, detalle...)" value="' +
-        (line.note || "").replace(/"/g, "&quot;") +
-        '" oninput="stratoSetLineNote(\'' +
-        p.id +
-        "', " +
-        (line.color ? "'" + line.color + "'" : "null") +
-        ", this.value)\">" +
+        '<input type="text" class="cart-item__note-input" data-act="note" placeholder="Observación (color, detalle...)" value="' +
+        stratoEsc(line.note || "") + '">' +
         "</div>" +
         "</div>" +
-        '<div class="cart-item__price">' +
-        priceText +
-        "</div>" +
+        '<div class="cart-item__price">' + priceHtml + "</div>" +
         "</div>"
       );
     })
@@ -274,7 +346,18 @@ function stratoRenderCartDrawer() {
         "</div>" +
         '<p id="cartCuponFeedback" class="cart-cupon__feedback"></p>';
 
-    let rowsHtml = '<div class="cart-drawer__row"><span>Subtotal</span><span>$U ' + subtotal.toLocaleString("es-UY") + "</span></div>";
+    // Con descuento por cantidad: "Subtotal" a precio de lista, la fila del
+    // ahorro, y después (si hay) el cupón. Sin descuento por cantidad queda
+    // exactamente como siempre.
+    const ahorroCantidad = stratoCartVolumeDiscount();
+    let rowsHtml =
+      '<div class="cart-drawer__row"><span>Subtotal</span><span>$U ' + (subtotal + ahorroCantidad).toLocaleString("es-UY") + "</span></div>";
+    if (ahorroCantidad > 0) {
+      rowsHtml +=
+        '<div class="cart-drawer__row cart-drawer__row--descuento"><span>Descuento por cantidad</span><span>-$U ' +
+        ahorroCantidad.toLocaleString("es-UY") +
+        "</span></div>";
+    }
     if (descuento > 0) {
       rowsHtml +=
         '<div class="cart-drawer__row cart-drawer__row--descuento"><span>Descuento</span><span>-$U ' +
@@ -322,7 +405,53 @@ function stratoWhatsAppLink(message) {
 
 /* Llamado desde main.js una vez que el catálogo (estático o en vivo) está
    listo, así el carrito ya puede resolver nombres/precios/fotos de producto. */
+let stratoCartEventsReady = false;
+function stratoInitCartEvents() {
+  const itemsEl = document.getElementById("cartItems");
+  if (!itemsEl || stratoCartEventsReady) return;
+  stratoCartEventsReady = true;
+
+  const lineOf = (el) => {
+    const row = el.closest(".cart-item");
+    return row ? row.dataset.key : null;
+  };
+  const currentQty = (key) => {
+    const line = stratoGetCart().find((l) => stratoLineKey(l.id, l.color, l.size) === key);
+    return line ? line.qty : 0;
+  };
+
+  itemsEl.addEventListener("click", (e) => {
+    const actEl = e.target.closest("[data-act]");
+    if (!actEl) return;
+    const key = lineOf(actEl);
+    if (!key) return;
+    const act = actEl.dataset.act;
+    if (act === "dec") stratoUpdateLineQtyByKey(key, currentQty(key) - 1);
+    else if (act === "inc") stratoUpdateLineQtyByKey(key, currentQty(key) + 1);
+    else if (act === "remove") stratoRemoveLineByKey(key);
+  });
+
+  // Cantidad escrita a mano (útil para pedidos de 20, 50, 100 unidades).
+  itemsEl.addEventListener("change", (e) => {
+    const el = e.target.closest('[data-act="qty"]');
+    if (!el) return;
+    const key = lineOf(el);
+    if (!key) return;
+    let qty = parseInt(el.value, 10);
+    if (isNaN(qty) || qty < 1) qty = 1;
+    stratoUpdateLineQtyByKey(key, Math.min(qty, 9999));
+  });
+
+  itemsEl.addEventListener("input", (e) => {
+    const el = e.target.closest('[data-act="note"]');
+    if (!el) return;
+    const key = lineOf(el);
+    if (key) stratoSetLineNoteByKey(key, el.value);
+  });
+}
+
 function stratoInitCartUI() {
+  stratoInitCartEvents();
   stratoUpdateCartCount();
   stratoRenderCartDrawer();
 

@@ -29,6 +29,15 @@ if (STRATO_SUPABASE_CONFIGURED && window.supabase) {
 // cualquier chequeo tipo `window.stratoSb` funcione sin sorpresas.
 window.stratoSb = stratoSb;
 
+/* Convierte filas {desde, descuento_pct} de la base a [{from, pct}], ordenadas
+   de menor a mayor y descartando las inválidas. */
+function stratoNormalizeTiers(rows, fromKey, pctKey) {
+  return (rows || [])
+    .map((r) => ({ from: Number(r && r[fromKey]), pct: Number(r && r[pctKey]) }))
+    .filter((t) => t.from >= 2 && t.pct > 0 && t.pct < 100)
+    .sort((a, b) => a.from - b.from);
+}
+
 /**
  * Trae categorías y productos activos desde Supabase y los vuelca en los
  * mismos arrays STRATO_CATEGORIES / STRATO_PRODUCTS que ya usa el resto del
@@ -40,7 +49,16 @@ async function stratoLoadLiveCatalog() {
   if (!stratoSb) return false;
 
   try {
-    const [{ data: categorias, error: errCat }, { data: productos, error: errProd }] = await Promise.all([
+    // Los descuentos por cantidad y los colores de Filamentos son opcionales:
+    // si todavía no se corrió la migración v7 (o falla la lectura), se ignoran
+    // y el catálogo carga igual, como siempre.
+    const optional = (query) =>
+      query.then(
+        (r) => (r.error ? [] : r.data || []),
+        () => []
+      );
+
+    const [{ data: categorias, error: errCat }, { data: productos, error: errProd }, escalones, filamentos] = await Promise.all([
       stratoSb.from("categorias").select("*").order("orden", { ascending: true }),
       stratoSb
         .from("productos")
@@ -49,6 +67,8 @@ async function stratoLoadLiveCatalog() {
         .select("*, producto_categorias(categorias(slug))")
         .eq("activo", true)
         .order("orden", { ascending: true }),
+      optional(stratoSb.from("escalones_cantidad").select("desde, descuento_pct").order("desde", { ascending: true })),
+      optional(stratoSb.from("filamentos_publicos").select("color, hex, disponible")),
     ]);
 
     if (errCat || errProd) {
@@ -67,6 +87,18 @@ async function stratoLoadLiveCatalog() {
       STRATO_CATEGORIES.push(...mapped);
     }
 
+    // Descuentos por cantidad globales (se pisan los de products.js, que están vacíos).
+    STRATO_TIERS.length = 0;
+    STRATO_TIERS.push(...stratoNormalizeTiers(escalones, "desde", "descuento_pct"));
+
+    // Colores públicos de Filamentos (circulito + sin stock).
+    STRATO_FILAMENTS.length = 0;
+    STRATO_FILAMENTS.push(
+      ...filamentos
+        .filter((f) => f && f.color)
+        .map((f) => ({ color: f.color, hex: f.hex || null, available: f.disponible !== false }))
+    );
+
     if (productos) {
       const mapped = productos.map((p) => ({
         id: p.id,
@@ -80,6 +112,14 @@ async function stratoLoadLiveCatalog() {
         tag: p.tag || undefined,
         description: p.descripcion || "",
         images: p.imagenes || [],
+        // Tamaños con precio propio (jsonb): [{nombre, precio}] → [{name, price}]
+        sizes: (Array.isArray(p.tamanos) ? p.tamanos : [])
+          .map((t) => ({ name: String((t && t.nombre) || "").trim(), price: Number(t && t.precio) }))
+          .filter((t) => t.name && !isNaN(t.price)),
+        byQuantity: !!p.venta_por_cantidad,
+        ownTiers: Array.isArray(p.escalones_propios)
+          ? stratoNormalizeTiers(p.escalones_propios, "desde", "descuento_pct")
+          : null,
       }));
       STRATO_PRODUCTS.length = 0;
       STRATO_PRODUCTS.push(...mapped);
