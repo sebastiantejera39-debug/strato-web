@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" href="images/favicon-180.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="page-home">
 
 <header class="site-header">
   <div class="container site-header__inner">
@@ -95,7 +95,7 @@
         <h2>Piezas destacadas</h2>
       </div>
       <div class="product-grid" id="featuredGrid"></div>
-      <div class="text-center" style="margin-top:var(--space-lg)">
+      <div class="text-center" style="margin-top:var(--space-md)">
         <a href="catalogo.html" class="btn btn-ghost">Ver catálogo completo</a>
       </div>
     </div>
@@ -124,22 +124,6 @@
           <h3>Coordinamos la entrega</h3>
           <p>Retiro en Montevideo o envío a todo el país. Te avisamos por WhatsApp en cada paso.</p>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- SUSTENTABILIDAD / SPLIT -->
-  <section class="section section--tight">
-    <div class="container split reveal in">
-      <div class="placeholder-art placeholder-art--2" style="min-height:320px;border-radius:2px;">
-        <span class="layers-mark"><span></span><span></span><span></span></span>
-        <small>Foto de taller próximamente</small>
-      </div>
-      <div>
-        <span class="eyebrow">Producción consciente</span>
-        <h2>Imprimimos solo lo que se va a usar</h2>
-        <p>Trabajamos con PLA, un plástico de origen vegetal, y priorizamos filamento reciclado cuando la pieza lo permite. No mantenemos stock masivo: cada objeto se imprime cuando alguien lo pide, así que nada se fabrica de más.</p>
-        <a href="nosotros.html" class="btn btn-ghost">Conocer más sobre Storge Lab</a>
       </div>
     </div>
   </section>
@@ -224,18 +208,25 @@
     <button class="lightbox__close" id="lbClose" aria-label="Cerrar">✕</button>
     <div class="lightbox__media" id="lbMedia"></div>
     <div class="lightbox__info">
-      <div class="product-card__cat" id="lbCat"></div>
-      <h3 class="product-card__title" style="font-size:1.5rem" id="lbTitle"></h3>
-      <p class="product-card__price" id="lbPrice" style="font-size:1.2rem;margin-bottom:1rem;"></p>
-      <p id="lbDesc"></p>
-      <p class="muted" id="lbMaterial" style="font-size:0.8rem;"></p>
-      <div id="lbColors" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin:1rem 0;"></div>
-      <div class="lightbox__qty">
-        <button onclick="stratoChangeQty(-1)">–</button>
-        <span id="lbQty">1</span>
-        <button onclick="stratoChangeQty(1)">+</button>
+      <div class="lightbox__info-top">
+        <div class="product-card__cat" id="lbCat"></div>
+        <h3 class="product-card__title" style="font-size:1.5rem" id="lbTitle"></h3>
+        <p class="product-card__price" id="lbPrice" style="font-size:1.2rem;margin-bottom:0;"></p>
       </div>
-      <button class="btn btn-primary btn-block" onclick="stratoAddCurrentToCart()">Agregar al carrito</button>
+      <div class="lightbox__desc-wrap" id="lbDescWrap">
+        <div id="lbDesc"></div>
+        <button type="button" class="lightbox__desc-toggle" id="lbDescToggle" onclick="stratoToggleLightboxDesc()" style="display:none;">Ver más</button>
+      </div>
+      <div class="lightbox__info-bottom">
+        <p class="muted" id="lbMaterial" style="font-size:0.8rem;"></p>
+        <div id="lbColors" style="display:flex;gap:0.4rem;flex-wrap:wrap;margin:1rem 0;"></div>
+        <div class="lightbox__qty">
+          <button onclick="stratoChangeQty(-1)">–</button>
+          <span id="lbQty">1</span>
+          <button onclick="stratoChangeQty(1)">+</button>
+        </div>
+        <button class="btn btn-primary btn-block" onclick="stratoAddCurrentToCart()">Agregar al carrito</button>
+      </div>
     </div>
   </div>
 </div>

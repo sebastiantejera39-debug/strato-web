@@ -40,7 +40,7 @@
   <div class="page-banner">
     <div class="container">
       <h1>Finalizar pedido</h1>
-      <p class="muted">Completá con tus datos personales/empresa para la facturación.</p>
+      <p class="muted">Completá con tus datos personales para la facturación.</p>
     </div>
   </div>
 
@@ -139,6 +139,10 @@
             <span>Subtotal</span>
             <span id="summarySubtotal">$U 0</span>
           </div>
+          <div class="cart-drawer__row cart-drawer__row--descuento" id="summaryAhorroRow" style="display:none">
+            <span>Descuento por cantidad</span>
+            <span id="summaryAhorro">-$U 0</span>
+          </div>
           <div class="cart-drawer__row cart-drawer__row--descuento" id="summaryDescuentoRow" style="display:none">
             <span>Descuento</span>
             <span id="summaryDescuento">-$U 0</span>
@@ -204,14 +208,18 @@
 
     document.getElementById("summaryItems").innerHTML = lines
       .map((l) => {
-        const priceText = l.product.price != null
-          ? "$U " + (l.product.price * l.qty).toLocaleString("es-UY")
+        const priceText = l.lineTotal != null
+          ? "$U " + l.lineTotal.toLocaleString("es-UY")
           : l.product.priceLabel || "Cotizar";
+        const variant = [l.sizeName, l.color].filter(Boolean).join(", ");
+        const discHtml = l.pct > 0
+          ? '<div class="muted" style="font-size:0.74rem;margin-top:0.1rem">-' + l.pct + '% por cantidad ($U ' + l.unit.toLocaleString("es-UY") + ' c/u)</div>'
+          : '';
         const noteHtml = l.note
           ? '<div class="muted" style="font-size:0.74rem;margin-top:0.1rem">Obs: ' + escHtml(l.note) + '</div>'
           : '';
         return '<div class="order-summary__item"><span>' + l.qty + '× ' + escHtml(l.product.name) +
-          (l.color ? ' (' + escHtml(l.color) + ')' : '') + noteHtml + '</span><span>' + priceText + '</span></div>';
+          (variant ? ' (' + escHtml(variant) + ')' : '') + discHtml + noteHtml + '</span><span>' + priceText + '</span></div>';
       })
       .join("");
 
@@ -225,7 +233,16 @@
     const recargo = checkoutMethod === "mp" ? Math.round(baseTotal * (MP_RECARGO_PCT / 100)) : 0;
     const finalTotal = baseTotal + recargo;
 
-    document.getElementById("summarySubtotal").textContent = "$U " + subtotal.toLocaleString("es-UY");
+    // "Subtotal" va a precio de lista; el ahorro por cantidad se muestra aparte.
+    const ahorro = stratoCartVolumeDiscount();
+    document.getElementById("summarySubtotal").textContent = "$U " + (subtotal + ahorro).toLocaleString("es-UY");
+    const ahorroRow = document.getElementById("summaryAhorroRow");
+    if (ahorro > 0) {
+      ahorroRow.style.display = "flex";
+      document.getElementById("summaryAhorro").textContent = "-$U " + ahorro.toLocaleString("es-UY");
+    } else {
+      ahorroRow.style.display = "none";
+    }
 
     const descuentoRow = document.getElementById("summaryDescuentoRow");
     if (descuento > 0) {
@@ -266,13 +283,30 @@
     document.getElementById("deptoField").style.display = isEnvio ? "block" : "none";
   });
 
+  // Items tal como se guardan en la tabla pedidos (jsonb). "precio" es el
+  // unitario que efectivamente se cobra (con el descuento por cantidad);
+  // precio_lista y descuento_cantidad_pct dejan registro de cómo se llegó a él.
+  function pedidoItems(lines) {
+    return lines.map((l) => ({
+      producto_id: l.product.id,
+      nombre: l.product.name,
+      tamano: l.sizeName || null,
+      qty: l.qty,
+      color: l.color || null,
+      nota: l.note || null,
+      precio: l.unit,
+      precio_lista: l.unitBase,
+      descuento_cantidad_pct: l.pct || 0,
+    }));
+  }
+
   async function pagarConMercadoPago(lines, datosComunes) {
     const submitBtn = document.getElementById("checkoutSubmitBtn");
     const items = lines.map((l) => ({
-      nombre: l.product.name,
+      nombre: l.sizeName ? l.product.name + " — " + l.sizeName : l.product.name,
       color: l.color || null,
       qty: l.qty,
-      precio: l.product.price || 0,
+      precio: l.unit || 0, // ya con el descuento por cantidad aplicado
     }));
 
     // Guardamos el pedido en Supabase (best-effort) antes de ir a Mercado Pago,
@@ -280,14 +314,7 @@
     if (typeof stratoInsertPedido === "function") {
       await stratoInsertPedido(Object.assign({}, datosComunes, {
         pago: "Mercado Pago",
-        items: lines.map((l) => ({
-          producto_id: l.product.id,
-          nombre: l.product.name,
-          qty: l.qty,
-          color: l.color || null,
-          nota: l.note || null,
-          precio: l.product.price,
-        })),
+        items: pedidoItems(lines),
       }));
     }
 
@@ -314,13 +341,18 @@
   async function pagarPorTransferencia(lines, datosComunes, subtotal, descuento, total) {
     let msg = "Hola! Quiero confirmar este pedido de Storge Lab:\n\n";
     lines.forEach((l) => {
-      const priceText = l.product.price != null
-        ? "$U " + (l.product.price * l.qty).toLocaleString("es-UY")
+      const priceText = l.lineTotal != null
+        ? "$U " + l.lineTotal.toLocaleString("es-UY")
         : l.product.priceLabel || "Cotizar";
-      msg += "• " + l.qty + "x " + l.product.name + (l.color ? " (" + l.color + ")" : "") + " — " + priceText + "\n";
+      const variant = [l.sizeName, l.color].filter(Boolean).join(", ");
+      msg += "• " + l.qty + "x " + l.product.name + (variant ? " (" + variant + ")" : "") + " — " + priceText;
+      if (l.pct > 0) msg += " (-" + l.pct + "% por cantidad)";
+      msg += "\n";
       if (l.note) msg += "   Obs: " + l.note + "\n";
     });
-    msg += "\nSubtotal: $U " + subtotal.toLocaleString("es-UY");
+    const ahorroCantidad = stratoCartVolumeDiscount();
+    msg += "\nSubtotal: $U " + (subtotal + ahorroCantidad).toLocaleString("es-UY");
+    if (ahorroCantidad > 0) msg += "\nDescuento por cantidad: -$U " + ahorroCantidad.toLocaleString("es-UY");
     if (descuento > 0) msg += "\nDescuento: -$U " + descuento.toLocaleString("es-UY");
     msg += "\nTotal: $U " + total.toLocaleString("es-UY");
     msg += "\n\nNombre: " + datosComunes.cliente_nombre;
@@ -333,14 +365,7 @@
     if (typeof stratoInsertPedido === "function") {
       await stratoInsertPedido(Object.assign({}, datosComunes, {
         pago: "Transferencia bancaria",
-        items: lines.map((l) => ({
-          producto_id: l.product.id,
-          nombre: l.product.name,
-          qty: l.qty,
-          color: l.color || null,
-          nota: l.note || null,
-          precio: l.product.price,
-        })),
+        items: pedidoItems(lines),
       }));
     }
 

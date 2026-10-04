@@ -115,6 +115,27 @@
   .inline-check input { width: auto; margin: 0; }
   .inline-check label { margin: 0; text-transform: none; font-size: 13px; color: var(--text); }
 
+  /* ---- Filamentos, tamaños, escalones de descuento ---- */
+  .fil-kg-preview { padding: 10px 12px; background: var(--bg-section); border: 1px solid var(--border); border-radius: 3px; font-size: 14px; margin-bottom: 16px; min-height: 40px; display: flex; align-items: center; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.25); flex: 0 0 auto; vertical-align: -1px; margin-right: 6px; }
+  .fil-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .fil-pill { display: inline-flex; align-items: center; gap: 2px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 14px; padding: 4px 12px 4px 10px; font-size: 12px; color: var(--text); cursor: pointer; }
+  .fil-pill:hover { border-color: var(--accent); }
+  .fil-pill.active { background: var(--accent); border-color: var(--accent); color: #FFFFFF; }
+  .fil-pill.off { opacity: 0.55; }
+  .fil-pill.off .fil-name { text-decoration: line-through; }
+  .row-edit { display: grid; grid-template-columns: 1fr 150px 36px; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .row-edit input { margin-bottom: 0; }
+  .row-del { background: none; border: 1px solid var(--border); border-radius: 3px; color: var(--text-muted); height: 38px; cursor: pointer; }
+  .row-del:hover { border-color: var(--danger); color: var(--danger); }
+  .fil-row { display: grid; grid-template-columns: 1fr 110px 130px 36px; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .fil-row select, .fil-row input { margin-bottom: 0; }
+  .fil-row input[readonly] { background: var(--bg-section); color: var(--text-muted); }
+  @media (max-width: 640px) {
+    .fil-row { grid-template-columns: 1fr 1fr 36px; }
+    .fil-row select { grid-column: 1 / -1; }
+  }
+
   /* ---- Categorías del producto (checkboxes) ---- */
   .cat-check-group { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 10px 0 16px; }
   .cat-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); text-transform: none; margin: 0; cursor: pointer; }
@@ -187,6 +208,7 @@
     <button data-panel="panel-pedidos">Pedidos</button>
     <button data-panel="panel-productos">Productos</button>
     <button data-panel="panel-categorias">Categorías</button>
+    <button data-panel="panel-filamentos">Filamentos</button>
     <button data-panel="panel-gastos">Gastos</button>
     <button data-panel="panel-calculadora">Calculadora</button>
   </nav>
@@ -263,6 +285,41 @@
     <!-- ---- PRODUCTOS ---- -->
     <section class="panel" id="panel-productos">
       <div class="card">
+        <div class="collapsible-header open" id="escalones-toggle">
+          <h2>Descuentos por cantidad</h2>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="collapsible-body open" id="escalones-body">
+          <p class="muted" style="font-size:12px;margin-bottom:14px;">Una sola tabla para todos los productos que tengan tildada la opción "Vender por cantidad". Ejemplo: desde 10 unidades 5%, desde 20 unidades 10%. El descuento se aplica al precio de cada unidad, y las unidades de un mismo producto se suman aunque sean de distintos colores o tamaños. Los botones rápidos de la tienda (10, 20, 50...) salen de acá.</p>
+          <div class="error-msg" id="escalones-load-error"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Desde (unidades)</th><th>Descuento</th><th></th></tr></thead>
+              <tbody id="escalones-tbody"></tbody>
+            </table>
+            <p class="empty-msg" id="escalones-empty" style="display:none">Todavía no cargaste ningún escalón.</p>
+          </div>
+          <form id="form-escalon" style="margin-top:14px;">
+            <div class="grid3">
+              <div>
+                <label for="esc-desde">Desde (unidades)</label>
+                <input type="number" id="esc-desde" min="2" step="1" placeholder="10" required>
+              </div>
+              <div>
+                <label for="esc-pct">Descuento (%)</label>
+                <input type="number" id="esc-pct" min="0.5" max="99" step="0.5" placeholder="5" required>
+              </div>
+              <div style="display:flex;align-items:flex-end;gap:8px;">
+                <button type="submit" class="btn" id="esc-submit-btn" style="margin-bottom:16px;">Guardar escalón</button>
+                <button type="button" class="btn-secondary" id="esc-cancel-btn" style="display:none;margin-bottom:16px;">Cancelar</button>
+              </div>
+            </div>
+            <div class="error-msg" id="escalon-error"></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="collapsible-header" id="producto-form-toggle">
           <h2 id="producto-form-title">Nuevo producto</h2>
           <span class="chevron">▾</span>
@@ -294,9 +351,32 @@
               <label for="prod-cotizar">Sin precio fijo (se cotiza por WhatsApp)</label>
             </div>
 
-            <label for="prod-color-input">Colores disponibles</label>
+            <label>Tamaños (opcional)</label>
+            <p class="muted" style="font-size:12px;margin:-8px 0 10px;">Si el producto viene en varios tamaños, cargalos con el precio de cada uno: el cliente elige uno y se cobra ese precio. Con tamaños, el campo Precio de arriba se completa solo con el más barato.</p>
+            <div id="prod-tamanos-rows"></div>
+            <button type="button" class="btn-secondary btn-small" id="prod-add-tamano" style="margin-bottom:16px;">+ Agregar tamaño</button>
+
+            <div class="inline-check">
+              <input type="checkbox" id="prod-por-cantidad">
+              <label for="prod-por-cantidad">Vender por cantidad (aplica la tabla de Descuentos por cantidad)</label>
+            </div>
+            <div id="prod-cantidad-extra" style="display:none;margin:-6px 0 16px 26px;">
+              <div class="inline-check">
+                <input type="checkbox" id="prod-escalones-propios">
+                <label for="prod-escalones-propios">Usar descuentos propios para este producto (en vez de la tabla general)</label>
+              </div>
+              <div id="prod-escalones-propios-box" style="display:none;">
+                <p class="muted" style="font-size:12px;margin:0 0 8px;">Desde cuántas unidades y qué % de descuento:</p>
+                <div id="prod-escalones-rows"></div>
+                <button type="button" class="btn-secondary btn-small" id="prod-add-escalon">+ Agregar escalón</button>
+              </div>
+            </div>
+
+            <label>Colores disponibles</label>
+            <p class="muted" style="font-size:12px;margin:-8px 0 10px;">Tocá los colores de tu lista de Filamentos que querés ofrecer en este producto. Los que están tachados están marcados sin stock.</p>
+            <div class="fil-picker" id="prod-fil-picker"></div>
             <div class="colores-tags" id="prod-colores-tags"></div>
-            <input type="text" id="prod-color-input" placeholder="Escribí un color y presioná Enter">
+            <input type="text" id="prod-color-input" placeholder="…o escribí otro color a mano y presioná Enter">
             <div class="inline-check">
               <input type="checkbox" id="prod-colores-multiple">
               <label for="prod-colores-multiple">Dejar elegir varios colores a la vez (si no, el cliente elige uno solo)</label>
@@ -400,6 +480,93 @@
             <tbody id="categorias-tbody"></tbody>
           </table>
           <p class="empty-msg" id="categorias-empty" style="display:none">No hay categorías todavía.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- FILAMENTOS ---- -->
+    <section class="panel" id="panel-filamentos">
+      <div class="card">
+        <div class="collapsible-header" id="filamento-form-toggle">
+          <h2 id="filamento-form-title">Nuevo filamento</h2>
+          <span class="chevron">▾</span>
+        </div>
+        <div class="collapsible-body" id="filamento-form-body">
+          <form id="form-filamento">
+            <div class="grid3">
+              <div>
+                <label for="fil-color">Color (el nombre que ve el cliente)</label>
+                <input type="text" id="fil-color" placeholder="Ej: Negro, Terracota" required>
+              </div>
+              <div>
+                <label for="fil-marca">Marca</label>
+                <input type="text" id="fil-marca" placeholder="Bambu Lab, Sunlu, Grilon3...">
+              </div>
+              <div>
+                <label for="fil-material">Tipo de material</label>
+                <input type="text" id="fil-material" list="fil-material-list" value="PLA">
+                <datalist id="fil-material-list">
+                  <option value="PLA"></option><option value="PLA Silk"></option><option value="PLA+"></option>
+                  <option value="PLA Matte"></option><option value="PETG"></option><option value="ABS"></option>
+                  <option value="TPU"></option><option value="Nylon"></option>
+                </datalist>
+              </div>
+            </div>
+            <div class="grid3">
+              <div>
+                <label for="fil-precio-rollo">Precio del rollo ($U)</label>
+                <input type="number" id="fil-precio-rollo" min="0" step="1" placeholder="950" required>
+              </div>
+              <div>
+                <label for="fil-peso-rollo">Peso del rollo (gr)</label>
+                <input type="number" id="fil-peso-rollo" min="1" step="1" value="1000" required>
+              </div>
+              <div>
+                <label>Precio por kg (se calcula solo)</label>
+                <div class="fil-kg-preview" id="fil-kg-preview">—</div>
+              </div>
+            </div>
+            <div class="grid2">
+              <div>
+                <label for="fil-hex">Color exacto para el circulito de la tienda</label>
+                <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;">
+                  <input type="color" id="fil-hex" value="#333333" style="width:60px;height:40px;padding:2px;margin:0;">
+                  <div class="inline-check" style="margin:0;">
+                    <input type="checkbox" id="fil-hex-activo" checked>
+                    <label for="fil-hex-activo">Mostrar circulito</label>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label>Disponibilidad</label>
+                <div class="inline-check">
+                  <input type="checkbox" id="fil-disponible" checked>
+                  <label for="fil-disponible">Disponible (si lo desmarcás, este color deja de ofrecerse en la tienda)</label>
+                </div>
+              </div>
+            </div>
+            <div class="grid2" style="margin-top:8px;">
+              <button type="submit" class="btn" id="fil-submit-btn">Guardar filamento</button>
+              <button type="button" class="btn-secondary" id="fil-cancel-btn" style="display:none">Cancelar edición</button>
+            </div>
+            <div class="error-msg" id="filamento-error"></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Mis filamentos</h2>
+        <p class="muted" style="font-size:12px;margin-bottom:14px;">Lo que cargues acá se usa en tres lugares: en la Calculadora (elegís el filamento y toma su precio por kg), en los colores de cada producto, y como circulito de color en la tienda.</p>
+        <div class="error-msg" id="filamentos-load-error"></div>
+        <div class="toolbar">
+          <div class="search-bar"><input type="text" id="filamentos-buscar" placeholder="Buscar por color, marca o material..."></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Color</th><th>Marca</th><th>Material</th><th>Rollo</th><th>$U / kg</th><th>Disponible</th><th></th></tr></thead>
+            <tbody id="filamentos-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="filamentos-empty" style="display:none">Todavía no cargaste ningún filamento.</p>
         </div>
       </div>
     </section>
@@ -515,7 +682,7 @@
       </div>
 
       <div class="card">
-        <h2>Calculadora de costos</h2>
+        <h2>Calculadora de costos <span class="muted" id="calc-editing-label" style="font-size:12px;font-weight:400;"></span></h2>
 
         <label for="calc-maquina">Máquina</label>
         <select id="calc-maquina"></select>
@@ -537,12 +704,12 @@
 
         <div class="grid2">
           <div>
-            <label for="calc-precio-filamento">Precio del filamento ($U / kg)</label>
-            <input type="number" id="calc-precio-filamento" min="0" step="1" value="700">
-          </div>
-          <div>
             <label for="calc-costo-electricidad">Costo de electricidad ($U / kWh)</label>
             <input type="number" id="calc-costo-electricidad" min="0" step="0.1" value="10">
+          </div>
+          <div>
+            <label>Peso total de la pieza (suma de los filamentos)</label>
+            <div class="fil-kg-preview" id="calc-peso-total">50 gr</div>
           </div>
         </div>
 
@@ -557,7 +724,7 @@
           </div>
         </div>
 
-        <div class="grid3">
+        <div class="grid2">
           <div>
             <label for="calc-horas">Horas de impresión</label>
             <input type="number" id="calc-horas" min="0" step="1" value="0">
@@ -566,13 +733,14 @@
             <label for="calc-minutos">Minutos adicionales</label>
             <input type="number" id="calc-minutos" min="0" max="59" step="1" value="30">
           </div>
-          <div>
-            <label for="calc-peso">Peso de la pieza (gr)</label>
-            <input type="number" id="calc-peso" min="0" step="1" value="50">
-          </div>
         </div>
 
-        <label for="calc-material">Material</label>
+        <label>Filamentos de la pieza</label>
+        <p class="muted" style="font-size:12px;margin:-8px 0 10px;">Elegí cada filamento de tu lista (pestaña Filamentos) y cuántos gramos lleva. Si la pieza es multicolor, agregá una fila por color. "Manual" te deja escribir el precio por kg a mano.</p>
+        <div id="calc-filamentos-rows"></div>
+        <button type="button" class="btn-secondary btn-small" id="calc-add-filamento" style="margin-bottom:16px;">+ Agregar filamento</button>
+
+        <label for="calc-material">Material (se completa solo al elegir un filamento)</label>
         <select id="calc-material">
           <option>PLA</option>
           <option>PLA Silk</option>
@@ -635,7 +803,7 @@
         <h2>Historial de cotizaciones</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Fecha</th><th>Pieza</th><th>Cliente</th><th>Máquina</th><th>Total</th><th>Ganancia</th><th></th></tr></thead>
+            <thead><tr><th>Fecha</th><th>Pieza</th><th>Cliente</th><th>Máquina</th><th>Costo base</th><th>Total</th><th>Ganancia</th><th></th></tr></thead>
             <tbody id="cotizaciones-tbody"></tbody>
           </table>
           <p class="empty-msg" id="cotizaciones-empty" style="display:none">Todavía no guardaste ninguna cotización.</p>
