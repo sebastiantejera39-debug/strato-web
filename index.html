@@ -41,49 +41,63 @@
 
 <main>
 
-  <!-- HERO -->
-  <section class="hero">
-    <div class="container hero__grid">
-      <div class="reveal in">
-        <span class="eyebrow">Impresiones 3D — Montevideo, Uruguay</span>
-        <h1>Creamos objetos<br>que dan ganas de <em>tener</em></h1>
-        <p class="lead">Storge Lab le da forma a tus ideas con impresión 3D: piezas de decoración, regalos, proyectos para tu emprendimiento y diseños propios. Impresión multicolor, series chicas y producción a pedido, capa a capa.</p>
-        <div class="hero__actions">
-          <a href="catalogo.html" class="btn btn-primary">Ver catálogo</a>
-          <a href="nosotros.html#proceso" class="btn btn-ghost">Cómo lo hacemos</a>
+  <!-- HERO + VALORES: el video ocupa toda esta zona (hasta que empieza el carrusel de categorías)
+       y se degrada hacia el lado donde está el texto -->
+  <div class="hero-stage">
+    <div class="hero-stage__media" aria-hidden="true">
+      <video autoplay muted loop playsinline poster="images/hero-poster.jpg">
+        <source src="images/hero-video.webm" type="video/webm">
+        <source src="images/hero-video.mp4" type="video/mp4">
+      </video>
+    </div>
+
+    <section class="hero">
+      <div class="container hero__grid">
+        <div class="reveal in">
+          <span class="eyebrow">Impresiones 3D — Montevideo, Uruguay</span>
+          <h1>Creamos objetos<br>que dan ganas de <em>tener</em></h1>
+          <p class="lead">Storge Lab le da forma a tus ideas con impresión 3D: piezas de decoración, regalos, proyectos para tu emprendimiento y diseños propios. Impresión multicolor, series chicas y producción a pedido, capa a capa.</p>
+          <div class="hero__actions">
+            <a href="catalogo.html" class="btn btn-primary">Ver catálogo</a>
+            <a href="nosotros.html#proceso" class="btn btn-ghost">Cómo lo hacemos</a>
+          </div>
         </div>
       </div>
-      <div class="hero__visual reveal in">
-        <video autoplay muted loop playsinline poster="images/hero-poster.jpg" aria-label="Impresora 3D de Storge Lab trabajando en una pieza">
-          <source src="images/hero-video.webm" type="video/webm">
-          <source src="images/hero-video.mp4" type="video/mp4">
-        </video>
+    </section>
+
+    <!-- VALUES -->
+    <div class="value-strip">
+      <div class="container">
+        <ul>
+          <li>Impresión multicolor</li>
+          <li>Hecho a pedido en Uruguay</li>
+          <li>PLA de origen vegetal</li>
+          <li>Piezas en tiradas cortas</li>
+        </ul>
       </div>
     </div>
-  </section>
 
-  <!-- VALUES -->
-  <div class="value-strip">
-    <div class="container">
-      <ul>
-        <li>Impresión multicolor</li>
-        <li>Hecho a pedido en Uruguay</li>
-        <li>PLA de origen vegetal</li>
-        <li>Piezas en tiradas cortas</li>
-      </ul>
-    </div>
+    <script>
+      /* Con "reducir movimiento" activado en el dispositivo, el video queda quieto (se ve la foto del póster). */
+      (function () {
+        var v = document.querySelector(".hero-stage video");
+        if (v && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          v.removeAttribute("autoplay");
+          v.pause();
+        }
+      })();
+    </script>
   </div>
 
-  <!-- CATEGORÍAS -->
-  <section class="section">
-    <div class="container">
-      <div class="section-head reveal in">
-        <span class="eyebrow">Catálogo</span>
-        <h2>Explorá por categoría</h2>
-      </div>
-      <div class="category-carousel reveal in" id="categoryCarousel">
-        <div class="category-carousel__track" id="categoryCarouselTrack"></div>
-      </div>
+  <!-- CATEGORÍAS: las tarjetas ocupan toda la sección, de la zona inicial hasta "La selección";
+       el título va encima, arriba a la izquierda -->
+  <section class="category-band" aria-labelledby="categorias-titulo">
+    <div class="container category-band__head">
+      <span class="eyebrow">Catálogo</span>
+      <h2 id="categorias-titulo">Explorá por categoría</h2>
+    </div>
+    <div class="category-carousel reveal in" id="categoryCarousel">
+      <div class="category-carousel__track" id="categoryCarouselTrack"></div>
     </div>
   </section>
 
@@ -97,33 +111,6 @@
       <div class="product-grid" id="featuredGrid"></div>
       <div class="text-center" style="margin-top:var(--space-md)">
         <a href="catalogo.html" class="btn btn-ghost">Ver catálogo completo</a>
-      </div>
-    </div>
-  </section>
-
-  <!-- PROCESO -->
-  <section class="section" id="proceso">
-    <div class="container">
-      <div class="section-head center reveal in" style="margin-left:auto;margin-right:auto;">
-        <span class="eyebrow">Cómo lo hacemos</span>
-        <h2>De la idea a tu mesa de living</h2>
-      </div>
-      <div class="process-grid reveal in">
-        <div class="process-step">
-          <div class="num">01</div>
-          <h3>Elegís o diseñamos</h3>
-          <p>Sumás una pieza del catálogo o nos contás qué necesitás para diseñarla a medida.</p>
-        </div>
-        <div class="process-step">
-          <div class="num">02</div>
-          <h3>Imprimimos capa a capa</h3>
-          <p>Cada objeto se imprime en PLA multicolor, en tiradas cortas, sin depósito de stock parado.</p>
-        </div>
-        <div class="process-step">
-          <div class="num">03</div>
-          <h3>Coordinamos la entrega</h3>
-          <p>Retiro en Montevideo o envío a todo el país. Te avisamos por WhatsApp en cada paso.</p>
-        </div>
       </div>
     </div>
   </section>
