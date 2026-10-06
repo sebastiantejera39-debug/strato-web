@@ -278,6 +278,16 @@ function stratoRenderCartDrawer() {
 
   const lines = stratoCartDetailed();
 
+  // Cada cambio vuelve a dibujar el panel: si el foco estaba en un − o + del
+  // teclado, se recuerda para devolvérselo al mismo botón (si no, quien usa
+  // Tab perdería el lugar en cada click).
+  let refocus = null;
+  const focused = document.activeElement;
+  if (focused && itemsEl.contains(focused) && focused.dataset && (focused.dataset.act === "dec" || focused.dataset.act === "inc")) {
+    const row = focused.closest(".cart-item");
+    if (row) refocus = { key: row.dataset.key, act: focused.dataset.act };
+  }
+
   if (!lines.length) {
     itemsEl.innerHTML =
       '<div class="cart-drawer__empty"><p class="eyebrow">Tu carrito</p><p>Todavía no agregaste productos.</p><a href="catalogo.html" class="btn btn-ghost btn-sm">Ver catálogo</a></div>';
@@ -313,7 +323,7 @@ function stratoRenderCartDrawer() {
         '<input type="number" class="cart-item__qty-input" data-act="qty" min="1" max="9999" value="' + line.qty + '" aria-label="Cantidad">' +
         '<button type="button" data-act="inc" aria-label="Más">+</button>' +
         "</div>" +
-        '<a class="cart-item__remove" data-act="remove">Quitar</a>' +
+        '<button type="button" class="cart-item__remove" data-act="remove" aria-label="Quitar ' + stratoEsc(p.name) + '">Quitar</button>' +
         '<div class="cart-item__note">' +
         '<input type="text" class="cart-item__note-input" data-act="note" placeholder="Observación (color, detalle...)" value="' +
         stratoEsc(line.note || "") + '">' +
@@ -337,7 +347,7 @@ function stratoRenderCartDrawer() {
         "<span>Cupón <strong>" +
         cuponCode +
         "</strong> aplicado</span>" +
-        '<a onclick="stratoQuitarCupon()">Quitar</a>' +
+        '<button type="button" onclick="stratoQuitarCupon()">Quitar</button>' +
         "</div>"
       : '<div class="cart-cupon">' +
         '<input type="text" id="cartCuponInput" class="cart-cupon__input" placeholder="Código de descuento" maxlength="30" ' +
@@ -372,17 +382,92 @@ function stratoRenderCartDrawer() {
       '<p class="muted" style="font-size:0.78rem;margin:0.75rem 0 1rem;">Los productos a cotizar se coordinan por WhatsApp. Envío no incluido.</p>' +
       '<a href="checkout.html" class="btn btn-primary btn-block">Finalizar pedido</a>';
   }
+
+  if (refocus) {
+    const rows = itemsEl.querySelectorAll(".cart-item");
+    for (const row of rows) {
+      if (row.dataset.key === refocus.key) {
+        const btn = row.querySelector('[data-act="' + refocus.act + '"]');
+        if (btn) btn.focus({ preventScroll: true });
+        break;
+      }
+    }
+  }
 }
 
 /* ---- Apertura / cierre del drawer ---- */
+/* Teclado: al abrir el carrito el foco pasa al botón de cerrar, y al cerrarlo
+   vuelve a donde estaba. Escape cierra (ver el listener de abajo) y Tab no
+   se escapa hacia la página que queda detrás. */
+let stratoCartLastFocus = null;
 function stratoOpenCart() {
-  document.getElementById("cartDrawer").classList.add("open");
+  const drawer = document.getElementById("cartDrawer");
+  if (!drawer) return;
+  const active = document.activeElement;
+  stratoCartLastFocus = active && active !== document.body ? active : null;
+  drawer.setAttribute("role", "dialog");
+  drawer.setAttribute("aria-label", "Tu carrito");
+  drawer.classList.add("open");
   document.getElementById("cartBackdrop").classList.add("open");
+  const close = document.getElementById("cartClose");
+  if (close) close.focus({ preventScroll: true });
 }
 function stratoCloseCart() {
   document.getElementById("cartDrawer").classList.remove("open");
   document.getElementById("cartBackdrop").classList.remove("open");
+  if (stratoCartLastFocus && stratoCartLastFocus.isConnected) stratoCartLastFocus.focus({ preventScroll: true });
+  stratoCartLastFocus = null;
 }
+
+/* Escape cierra lo que esté arriba (carrito, o la ficha de producto, o antes
+   que nada el desplegable de colores abierto). Tab queda atrapado dentro del
+   carrito o de la ficha mientras están abiertos. */
+function stratoFocusables(container) {
+  return Array.from(
+    container.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
+  ).filter((el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden");
+}
+document.addEventListener("keydown", (e) => {
+  const drawer = document.getElementById("cartDrawer");
+  const lightbox = document.getElementById("productLightbox");
+  const cartOpen = !!(drawer && drawer.classList.contains("open"));
+  const lightboxOpen = !!(lightbox && lightbox.classList.contains("open"));
+
+  if (e.key === "Escape") {
+    const colorBox = document.querySelector(".color-multiselect.open");
+    if (lightboxOpen && colorBox) {
+      colorBox.classList.remove("open");
+    } else if (cartOpen) {
+      stratoCloseCart();
+    } else if (lightboxOpen && typeof stratoCloseProduct === "function") {
+      stratoCloseProduct();
+    } else {
+      return;
+    }
+    e.preventDefault();
+    return;
+  }
+
+  if (e.key === "Tab" && (cartOpen || lightboxOpen)) {
+    const container = cartOpen ? drawer : lightbox.querySelector(".lightbox__panel");
+    if (!container) return;
+    const items = stratoFocusables(container);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (!container.contains(active)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    } else if (e.shiftKey && (active === first || active === container)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+});
 
 /* ---- Toast simple ---- */
 function stratoShowToast(message) {

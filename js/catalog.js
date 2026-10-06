@@ -98,9 +98,11 @@ function stratoProductCard(product, index) {
     '<div class="product-card__cat">' +
     stratoCategoryNames(product) +
     "</div>" +
-    '<h3 class="product-card__title">' +
+    '<h3 class="product-card__title"><button type="button" class="product-card__title-btn" onclick="stratoOpenProduct(\'' +
+    product.id +
+    "')\">" +
     product.name +
-    "</h3>" +
+    "</button></h3>" +
     (stratoProductTiers(product).length ? '<div class="product-card__bulk">Descuento por cantidad</div>' : "") +
     '<div class="product-card__foot">' +
     '<span class="product-card__price">' +
@@ -245,6 +247,7 @@ function stratoInitFeatured() {
 
 /* ---- Lightbox de producto ---- */
 let stratoCurrentProduct = null;
+let stratoLastFocus = null;
 
 /* Los bloques nuevos de la ficha (tamaños, descuentos por cantidad, total y
    cantidad editable) se crean desde acá en vez de estar escritos en cada
@@ -253,6 +256,18 @@ let stratoCurrentProduct = null;
 function stratoEnsureLightboxExtras() {
   const colors = document.getElementById("lbColors");
   if (!colors) return;
+
+  // Accesibilidad: la ficha es un diálogo con nombre, y los − / + tienen
+  // etiqueta (en el HTML solo dicen "–" y "+").
+  const lb = document.getElementById("productLightbox");
+  if (lb && !lb.hasAttribute("role")) {
+    lb.setAttribute("role", "dialog");
+    lb.setAttribute("aria-modal", "true");
+    lb.setAttribute("aria-labelledby", "lbTitle");
+    const qtyBtns = lb.querySelectorAll(".lightbox__qty button");
+    if (qtyBtns[0]) qtyBtns[0].setAttribute("aria-label", "Menos");
+    if (qtyBtns[1]) qtyBtns[1].setAttribute("aria-label", "Más");
+  }
 
   if (!document.getElementById("lbSizes")) {
     const d = document.createElement("div");
@@ -334,8 +349,19 @@ function stratoOpenProduct(id) {
   stratoRenderLightboxColors(product, lightbox);
   stratoRefreshLightboxPrice();
 
+  // Teclado: se recuerda de dónde se abrió (ej. el título de la tarjeta) para
+  // devolverle el foco al cerrar, y el foco entra al cuadro de la ficha (no a
+  // un botón: así, al abrirla con mouse o dedo, no aparece ningún anillo de
+  // foco; con Tab el primer salto va al botón de cerrar).
+  const active = document.activeElement;
+  stratoLastFocus = active && active !== document.body ? active : null;
   lightbox.classList.add("open");
   document.body.style.overflow = "hidden";
+  const panel = lightbox.querySelector(".lightbox__panel");
+  if (panel) {
+    panel.setAttribute("tabindex", "-1");
+    panel.focus({ preventScroll: true });
+  }
 }
 
 /* ---- Tamaños: botones con el nombre y el precio de cada uno. ---- */
@@ -648,6 +674,8 @@ function stratoCloseProduct() {
   const lightbox = document.getElementById("productLightbox");
   if (lightbox) lightbox.classList.remove("open");
   document.body.style.overflow = "";
+  if (stratoLastFocus && stratoLastFocus.isConnected) stratoLastFocus.focus({ preventScroll: true });
+  stratoLastFocus = null;
 }
 
 function stratoChangeQty(delta) {
