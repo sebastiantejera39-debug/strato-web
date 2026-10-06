@@ -608,6 +608,49 @@ input, textarea, select { font-family: inherit; }
 .cta-band .eyebrow { color: var(--color-accent); }
 .cta-band .eyebrow::before { background: var(--color-accent); }
 
+/* ---------- Nosotros: video de fondo en "Nuestra historia" ----------
+   Recorte horizontal del cabezal imprimiendo, a todo el ancho y alto de la
+   sección, levemente transparente sobre bordó. Una capa oscura más fuerte del
+   lado del texto asegura que se lea. Para ajustar: --about-video-opacity (cuánto
+   se ve el video) y el degradé de .about-video::after. */
+.about-video {
+  --about-video-opacity: 0.8;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  min-height: clamp(360px, 30vw, 440px);
+  background: var(--color-charcoal);
+  color: var(--color-paper);
+}
+.about-video__media { position: absolute; inset: 0; z-index: -2; }
+.about-video__media video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 85%;
+  opacity: var(--about-video-opacity);
+}
+.about-video::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, rgba(36, 8, 5, 0.9) 0%, rgba(36, 8, 5, 0.78) 50%, rgba(36, 8, 5, 0.3) 78%, rgba(36, 8, 5, 0.1) 100%);
+}
+.about-video .container { width: 100%; }
+.about-video .eyebrow { color: var(--color-accent); }
+.about-video .eyebrow::before { background: var(--color-accent); }
+.about-video h2 { color: var(--color-paper); }
+.about-video p { color: rgba(255, 255, 255, 0.9); }
+@media (max-width: 900px) {
+  /* En celular el texto ocupa todo el ancho: capa pareja. */
+  .about-video::after { background: rgba(36, 8, 5, 0.6); }
+  .about-video__media video { object-position: 72% 50%; }
+}
+
 /* ---------- Footer ---------- */
 .site-footer {
   background: var(--color-charcoal);
