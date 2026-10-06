@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es-UY">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Página no encontrada — Storge Lab</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" href="/images/favicon.png">
+<link rel="apple-touch-icon" href="/images/favicon-180.png">
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  /* El pie queda abajo aunque la página sea corta. */
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  main { flex: 1; display: flex; align-items: center; }
+  main .section { width: 100%; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container site-header__inner">
+    <a href="/index.html" class="logo">
+      <img src="/images/logo-storge-wide.png" alt="Storge Lab">
+    </a>
+    <nav class="main-nav">
+      <ul>
+        <li><a href="/index.html">Inicio</a></li>
+        <li><a href="/catalogo.html">Catálogo</a></li>
+        <li><a href="/nosotros.html">Nosotros</a></li>
+        <li><a href="/contacto.html">Contacto</a></li>
+      </ul>
+    </nav>
+    <div class="header-actions">
+      <button class="icon-btn" id="cartToggle" aria-label="Ver carrito">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 8h12l-1 12H7L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
+        <span class="cart-count">0</span>
+      </button>
+      <button class="nav-toggle" aria-label="Abrir menú">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="section text-center">
+    <div class="container reveal in" style="max-width:640px">
+      <span class="eyebrow" style="justify-content:center">Error 404</span>
+      <h1>No encontramos esa página</h1>
+      <p>Puede que el link esté mal escrito o que la página ya no exista. Mirá el catálogo o escribinos y te damos una mano.</p>
+      <div class="hero__actions" style="justify-content:center">
+        <a href="/catalogo.html" class="btn btn-primary">Ver el catálogo</a>
+        <a href="/index.html" class="btn btn-ghost">Volver al inicio</a>
+        <a href="/contacto.html" class="btn btn-ghost">Escribinos</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-bottom" style="border-top:none;padding-top:0;justify-content:center;">
+      <span>© <span data-year></span> Storge Lab. Hecho en Montevideo, Uruguay.</span>
+    </div>
+  </div>
+</footer>
+
+<div class="cart-drawer__backdrop" id="cartBackdrop"></div>
+<aside class="cart-drawer" id="cartDrawer">
+  <div class="cart-drawer__head">
+    <span class="eyebrow">Tu carrito</span>
+    <button class="icon-btn" id="cartClose" aria-label="Cerrar carrito">✕</button>
+  </div>
+  <div class="cart-drawer__items" id="cartItems"></div>
+  <div class="cart-drawer__foot" id="cartFoot"></div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="/js/products.js"></script>
+<script src="/js/supabase-client.js"></script>
+<script src="/js/cart.js"></script>
+<script src="/js/main.js"></script>
+</body>
+</html>
