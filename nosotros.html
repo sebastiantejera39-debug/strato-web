@@ -37,6 +37,15 @@
 </header>
 
 <main>
+  <!-- INTRO: título + "Nuestra historia" comparten un solo video de fondo (el barco imprimiéndose) -->
+  <div class="about-intro">
+    <div class="about-video__media" aria-hidden="true">
+      <video autoplay muted loop playsinline preload="metadata" poster="images/nosotros-video-poster.jpg">
+        <source src="images/nosotros-video.webm" type="video/webm">
+        <source src="images/nosotros-video.mp4" type="video/mp4">
+      </video>
+    </div>
+
   <div class="page-banner">
     <div class="container">
       <span class="eyebrow">Nosotros</span>
@@ -45,13 +54,7 @@
     </div>
   </div>
 
-  <section class="section section--tight about-video" aria-labelledby="historia-titulo">
-    <div class="about-video__media" aria-hidden="true">
-      <video autoplay muted loop playsinline preload="metadata" poster="images/nosotros-video-poster.jpg">
-        <source src="images/nosotros-video.webm" type="video/webm">
-        <source src="images/nosotros-video.mp4" type="video/mp4">
-      </video>
-    </div>
+  <section class="section section--tight about-story" aria-labelledby="historia-titulo">
     <div class="container reveal in">
       <div style="max-width:58ch">
         <span class="eyebrow">Nuestra historia</span>
@@ -61,16 +64,25 @@
       </div>
     </div>
     <script>
-      /* Con "reducir movimiento" activado en el dispositivo, el video queda quieto (se ve la foto del póster). */
+      /* En pantallas chicas el bloque es muy alto: se usa la versión vertical del video (la filmada
+         tal cual, sin recortar), que se ve nítida. Con "reducir movimiento" activado en el
+         dispositivo, el video queda quieto (se ve la foto del póster). */
       (function () {
-        var v = document.querySelector(".about-video video");
-        if (v && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        var v = document.querySelector(".about-intro video");
+        if (!v || !window.matchMedia) return;
+        if (window.matchMedia("(max-width: 640px)").matches) {
+          v.poster = "images/nosotros-video-movil-poster.jpg";
+          v.innerHTML = '<source src="images/nosotros-video-movil.webm" type="video/webm"><source src="images/nosotros-video-movil.mp4" type="video/mp4">';
+          v.load();
+        }
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
           v.removeAttribute("autoplay");
           v.pause();
         }
       })();
     </script>
   </section>
+  </div>
 
   <!-- PROCESO: banda a ancho completo, pegada al video de arriba, sin espacios en blanco -->
   <section class="process-band" id="proceso" aria-labelledby="proceso-titulo">
