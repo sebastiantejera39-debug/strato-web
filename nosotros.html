@@ -45,15 +45,31 @@
     </div>
   </div>
 
-  <section class="section section--tight">
+  <section class="section section--tight about-video" aria-labelledby="historia-titulo">
+    <div class="about-video__media" aria-hidden="true">
+      <video autoplay muted loop playsinline preload="metadata" poster="images/nosotros-video-poster.jpg">
+        <source src="images/nosotros-video.webm" type="video/webm">
+        <source src="images/nosotros-video.mp4" type="video/mp4">
+      </video>
+    </div>
     <div class="container reveal in">
-      <div style="max-width:64ch">
+      <div style="max-width:58ch">
         <span class="eyebrow">Nuestra historia</span>
-        <h2>Empezamos de cero, con una impresora</h2>
+        <h2 id="historia-titulo">Empezamos de cero, con una impresora</h2>
         <p>Storge Lab arrancó en Montevideo con una idea simple: usar la impresión 3D para hacer objetos de diseño que en la escala artesanal tradicional serían muy caros o muy lentos de producir. Elegimos una impresora multicolor desde el primer día porque no queríamos limitarnos a una sola tonada por pieza.</p>
         <p>Diseñamos, imprimimos y empaquetamos cada pedido nosotros mismos. Todavía no hay depósito ni stock parado: cada objeto se produce cuando alguien lo pide, en series cortas.</p>
       </div>
     </div>
+    <script>
+      /* Con "reducir movimiento" activado en el dispositivo, el video queda quieto (se ve la foto del póster). */
+      (function () {
+        var v = document.querySelector(".about-video video");
+        if (v && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          v.removeAttribute("autoplay");
+          v.pause();
+        }
+      })();
+    </script>
   </section>
 
   <section class="section" id="proceso">
