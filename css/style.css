@@ -43,7 +43,23 @@
 
   --radius: 2px;
   --max-width: 1240px;
-  --transition: 320ms cubic-bezier(.4,0,.2,1);
+
+  /* Movimiento (criterios de Emil Kowalski): lo que se usa seguido es corto
+     y responde ya; lo ocasional (ficha, carrito) puede durar un poco más.
+     - hover / selección / colores: 150ms con "ease"
+     - confirmación de presión (:active): 160ms con ease-out
+     - ficha de producto: entra 200ms, sale 150ms (más rápido que la entrada)
+     - carrito lateral: 300ms con curva de drawer
+     Las curvas incorporadas del navegador son flojas; ease-out fuerte
+     arranca rápido y asienta suave. Nunca ease-in en la interfaz. */
+  --ease-out: cubic-bezier(.23, 1, .32, 1);
+  --ease-drawer: cubic-bezier(.32, .72, 0, 1);
+  --dur-fast: 150ms;
+  --dur-press: 160ms;
+  --dur-enter: 200ms;
+  --dur-exit: 150ms;
+  --dur-drawer: 300ms;
+  --transition: var(--dur-fast) ease;
 }
 
 /* ---------- Reset ---------- */
@@ -79,7 +95,7 @@ input, textarea, select { font-family: inherit; }
 /* ---------- Utilities ---------- */
 .eyebrow {
   font-family: var(--font-body);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--color-charcoal);
@@ -133,7 +149,8 @@ input, textarea, select { font-family: inherit; }
   background: transparent;
   color: var(--color-charcoal);
   border-radius: var(--radius);
-  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  transition: background var(--transition), color var(--transition), border-color var(--transition),
+    opacity var(--transition), transform var(--dur-press) var(--ease-out);
   white-space: nowrap;
 }
 .btn:hover { background: var(--color-charcoal); color: var(--color-paper); }
@@ -153,7 +170,7 @@ input, textarea, select { font-family: inherit; }
   color: var(--color-charcoal);
 }
 .btn-ghost:hover { border-color: var(--color-charcoal); background: transparent; color: var(--color-charcoal); }
-.btn-sm { padding: 0.7em 1.4em; font-size: 0.74rem; }
+.btn-sm { padding: 0.7em 1.4em; font-size: 0.75rem; }
 .btn-block { width: 100%; }
 .btn[disabled] { opacity: 0.4; pointer-events: none; }
 
@@ -223,20 +240,23 @@ input, textarea, select { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   padding: 0.3rem;
+  transition: transform var(--dur-press) var(--ease-out);
 }
 .icon-btn svg { width: 22px; height: 22px; }
 .cart-count {
   position: absolute;
-  top: -4px; right: -6px;
+  top: -5px; right: -7px;
   background: var(--color-accent);
   color: var(--color-charcoal);
-  font-size: 0.62rem;
-  width: 16px; height: 16px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  width: 18px; height: 18px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-body);
+  line-height: 1;
 }
-.nav-toggle { display: none; background: none; border: none; }
+.nav-toggle { display: none; background: none; border: none; transition: transform var(--dur-press) var(--ease-out); }
 .nav-toggle svg { width: 24px; height: 24px; }
 
 @media (max-width: 860px) {
@@ -370,7 +390,7 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   align-items: flex-end;
   padding: var(--space-sm);
-  transition: transform var(--transition);
+  transition: transform var(--dur-enter) var(--ease-out);
   background-size: cover;
   background-position: center;
 }
@@ -385,7 +405,7 @@ input, textarea, select { font-family: inherit; }
 .category-card__label span {
   display: block;
   font-family: var(--font-body);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: rgba(255,255,255,0.75);
@@ -419,6 +439,11 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   flex-direction: column;
 }
+/* El cuerpo de la tarjeta ocupa todo el alto sobrante y el pie (precio +
+   Agregar) queda pegado abajo: así, aunque una tarjeta tenga una línea de
+   más (ej. "Descuento por cantidad"), los precios y botones de toda la fila
+   quedan alineados. */
+.product-card__body { flex: 1 1 auto; display: flex; flex-direction: column; }
 .product-card__frame {
   position: relative;
   aspect-ratio: 1/1;
@@ -440,23 +465,33 @@ input, textarea, select { font-family: inherit; }
   pointer-events: none; /* deja pasar el click a las flechas/puntitos de la galería */
 }
 .product-card__overlay span {
-  color: #fff; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: #fff; font-size: 0.75rem; letter-spacing: 0.16em; text-transform: uppercase;
   border: 1px solid rgba(255,255,255,0.7); padding: 0.6em 1.2em;
 }
 .product-card__tag {
   position: absolute; top: 10px; left: 10px; z-index: 2;
   background: var(--color-charcoal); color: var(--color-paper);
-  font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
-  padding: 0.35em 0.7em; border-radius: var(--radius);
+  font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 0.3em 0.65em; border-radius: var(--radius);
 }
 .product-card__body { padding-top: var(--space-xs); }
 .product-card__cat {
-  font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-stone-light);
+  font-size: 0.75rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-stone-light);
 }
 .product-card__title { font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; margin: 0.2em 0; }
+/* El título es un botón de verdad: se llega con Tab y abre la ficha con
+   Enter o Espacio (antes solo se podía abrir con el mouse o el dedo). */
+.product-card__title-btn {
+  background: none; border: 0; padding: 0; margin: 0;
+  font: inherit; letter-spacing: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .product-card__title-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+}
 .product-card__price { font-weight: 500; color: var(--color-charcoal); }
 .product-card__foot {
-  display: flex; align-items: center; justify-content: space-between; margin-top: 0.5em;
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: auto; padding-top: 0.5em;
 }
 
 /* ---------- Galería de fotos (grilla de catálogo + lightbox) ---------- */
@@ -497,7 +532,7 @@ input, textarea, select { font-family: inherit; }
 }
 .placeholder-art .layers-mark { color: var(--color-charcoal); opacity: 0.55; }
 .placeholder-art small {
-  font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-stone-light);
+  font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-stone-light);
 }
 .placeholder-art--1 { background: linear-gradient(150deg, #F7EFEA, #EAD9D0); }
 .placeholder-art--2 { background: linear-gradient(150deg, #F3EAFF, #E4D3FF); }
@@ -516,7 +551,9 @@ input, textarea, select { font-family: inherit; }
 .filter-tabs button {
   background: transparent; border: 1px solid var(--color-line);
   padding: 0.55em 1.1em; font-size: 0.76rem; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--color-stone); border-radius: 999px; transition: all var(--transition);
+  color: var(--color-stone); border-radius: 999px;
+  transition: background var(--transition), border-color var(--transition), color var(--transition),
+    transform var(--dur-press) var(--ease-out);
 }
 .filter-tabs button.active,
 .filter-tabs button:hover { border-color: var(--color-charcoal); color: var(--color-charcoal); }
@@ -584,7 +621,7 @@ input, textarea, select { font-family: inherit; }
   margin-bottom: var(--space-lg);
 }
 .footer-grid h4 {
-  font-family: var(--font-body); font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
+  font-family: var(--font-body); font-size: 0.75rem; letter-spacing: 0.16em; text-transform: uppercase;
   color: var(--color-onbordo-muted); margin-bottom: var(--space-sm);
 }
 .footer-grid ul { display: flex; flex-direction: column; gap: 0.6rem; }
@@ -602,13 +639,23 @@ input, textarea, select { font-family: inherit; }
 }
 
 /* ---------- Lightbox de producto ---------- */
+/* La ficha ya no pasa de display:none a display:flex de golpe: está siempre
+   en el layout pero invisible (visibility:hidden — así tampoco se llega con
+   Tab a lo que está oculto) y aparece con un fundido + el panel escalando
+   desde .97 (nunca desde 0). Entra en 200ms y sale en 150ms: lo que responde
+   al usuario es más lento que lo que el sistema retira. */
 .lightbox {
   position: fixed; inset: 0; z-index: 300;
-  display: none;
+  display: flex;
   align-items: center; justify-content: center;
   padding: var(--space-md);
+  visibility: hidden; opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-exit) var(--ease-out), visibility 0s linear var(--dur-exit);
 }
-.lightbox.open { display: flex; }
+.lightbox.open {
+  visibility: visible; opacity: 1; pointer-events: auto;
+  transition: opacity var(--dur-enter) var(--ease-out), visibility 0s;
+}
 .lightbox__backdrop {
   position: absolute; inset: 0; background: rgba(53,10,6,0.55); backdrop-filter: blur(2px);
 }
@@ -623,7 +670,16 @@ input, textarea, select { font-family: inherit; }
   overflow: hidden;
   display: grid; grid-template-columns: 1fr 1fr;
   border-radius: var(--radius);
+  transform: scale(.97);
+  transition: transform var(--dur-exit) var(--ease-out);
 }
+.lightbox.open .lightbox__panel {
+  transform: none;
+  transition: transform var(--dur-enter) var(--ease-out);
+}
+/* El foco entra al cuadro entero al abrir la ficha; sin anillo (el anillo
+   aparece en cada control al navegar con Tab). */
+.lightbox__panel:focus { outline: none; }
 .lightbox__media { height: 100%; overflow: hidden; }
 .lightbox__media img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* Producto sin foto todavía: el placeholder ocupa toda la columna de la foto. */
@@ -686,6 +742,7 @@ input, textarea, select { font-family: inherit; }
   background: var(--color-paper); border: 1px solid var(--color-line);
   width: 34px; height: 34px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
+  transition: transform var(--dur-press) var(--ease-out);
 }
 /* Selector de color de un solo color: menú desplegable normal. */
 .lightbox__color-select {
@@ -710,6 +767,7 @@ input, textarea, select { font-family: inherit; }
   background: var(--color-paper); border-radius: var(--radius);
   font-size: 0.9rem; color: var(--color-ink);
   display: flex; align-items: center; justify-content: space-between; gap: 0.5em;
+  transition: transform var(--dur-press) var(--ease-out);
 }
 .color-multiselect__btn::after { content: "▾"; color: var(--color-stone); flex: 0 0 auto; }
 .color-multiselect__btn:focus { outline: none; border-color: var(--color-charcoal); }
@@ -730,6 +788,7 @@ input, textarea, select { font-family: inherit; }
 .lightbox__qty { display: flex; align-items: center; gap: 0.8rem; margin: var(--space-sm) 0; }
 .lightbox__qty button {
   width: 30px; height: 30px; border: 1px solid var(--color-line); background: none;
+  transition: transform var(--dur-press) var(--ease-out), border-color var(--transition);
 }
 
 /* ---------- Ficha de producto: tamaños, descuentos por cantidad, total ---------- */
@@ -739,7 +798,7 @@ input, textarea, select { font-family: inherit; }
   .lightbox--rich .lightbox__panel { height: min(680px, 92vh); max-height: min(680px, 92vh); }
 }
 .lightbox__field-label {
-  font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase;
+  font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--color-stone-light); margin-bottom: 0.35rem;
 }
 .lightbox__sizes { margin: 0.7rem 0 0; }
@@ -749,7 +808,8 @@ input, textarea, select { font-family: inherit; }
   padding: 0.5em 1em; border: 1px solid var(--color-line); border-radius: 999px;
   background: var(--color-paper); color: var(--color-ink);
   font: inherit; font-size: 0.82rem; cursor: pointer;
-  transition: background var(--transition), border-color var(--transition), color var(--transition);
+  transition: background var(--transition), border-color var(--transition), color var(--transition),
+    transform var(--dur-press) var(--ease-out);
 }
 .size-pill__name { font-weight: 600; }
 .size-pill__price { font-size: 0.76rem; color: var(--color-stone-light); }
@@ -763,13 +823,15 @@ input, textarea, select { font-family: inherit; }
   display: flex; flex-direction: column; align-items: flex-start; gap: 0.05em;
   padding: 0.4em 0.75em; border: 1px solid var(--color-line); border-radius: var(--radius);
   background: var(--color-paper); color: var(--color-ink);
-  font: inherit; font-size: 0.74rem; line-height: 1.25; cursor: pointer; text-align: left;
+  font: inherit; font-size: 0.75rem; line-height: 1.25; cursor: pointer; text-align: left;
+  transition: background var(--transition), border-color var(--transition),
+    transform var(--dur-press) var(--ease-out);
 }
 .tier-chip__qty { font-weight: 700; }
 .tier-chip__price { color: var(--color-stone-light); }
 .tier-chip:hover { border-color: var(--color-charcoal); }
 .tier-chip.active { border-color: var(--color-charcoal); background: var(--color-accent-tint); }
-.lightbox__tiers-note { font-size: 0.72rem; color: var(--color-stone-light); margin-top: 0.35rem; }
+.lightbox__tiers-note { font-size: 0.75rem; color: var(--color-stone-light); margin-top: 0.35rem; }
 
 .lightbox__qty-input {
   width: 64px; text-align: center; padding: 0.45em 0.2em;
@@ -787,7 +849,7 @@ input, textarea, select { font-family: inherit; }
 .lightbox__unit { font-size: 0.75rem; font-weight: 400; color: var(--color-stone-light); }
 .lightbox__price-old { font-size: 0.85rem; font-weight: 400; color: var(--color-stone-light); }
 .lightbox__disc {
-  font-size: 0.72rem; font-weight: 600; color: var(--color-charcoal);
+  font-size: 0.75rem; font-weight: 600; color: var(--color-charcoal);
   background: var(--color-accent-tint); padding: 0.12em 0.55em; border-radius: 999px;
 }
 
@@ -803,7 +865,7 @@ input, textarea, select { font-family: inherit; }
 .color-single .color-multiselect__row { cursor: pointer; }
 
 .product-card__bulk {
-  font-size: 0.66rem; letter-spacing: 0.1em; text-transform: uppercase;
+  font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--color-charcoal); margin: 0.1rem 0 0.15rem;
 }
 @media (max-width: 720px) {
@@ -831,14 +893,20 @@ input, textarea, select { font-family: inherit; }
 .cart-drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100%);
   background: var(--color-paper); z-index: 400;
-  transform: translateX(100%); transition: transform var(--transition);
+  /* visibility:hidden mientras está cerrado: así no se llega con Tab a los
+     botones del carrito que quedan fuera de pantalla. */
+  transform: translateX(100%); visibility: hidden;
+  transition: transform var(--dur-drawer) var(--ease-drawer), visibility 0s linear var(--dur-drawer);
   display: flex; flex-direction: column;
   box-shadow: -8px 0 30px rgba(53,10,6,0.08);
 }
-.cart-drawer.open { transform: translateX(0); }
+.cart-drawer.open {
+  transform: translateX(0); visibility: visible;
+  transition: transform var(--dur-drawer) var(--ease-drawer), visibility 0s;
+}
 .cart-drawer__backdrop {
   position: fixed; inset: 0; background: rgba(53,10,6,0.45); z-index: 390;
-  opacity: 0; pointer-events: none; transition: opacity var(--transition);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-enter) var(--ease-out);
 }
 .cart-drawer__backdrop.open { opacity: 1; pointer-events: auto; }
 .cart-drawer__head {
@@ -849,18 +917,31 @@ input, textarea, select { font-family: inherit; }
 .cart-item { display: grid; grid-template-columns: 64px 1fr auto; gap: var(--space-sm); padding: var(--space-sm) 0; border-bottom: 1px solid var(--color-line); }
 .cart-item__thumb { width: 64px; height: 64px; border-radius: var(--radius); overflow: hidden; }
 .cart-item__title { font-family: var(--font-display); font-size: 0.95rem; }
-.cart-item__meta { font-size: 0.72rem; color: var(--color-stone-light); text-transform: uppercase; letter-spacing: 0.06em; }
+.cart-item__meta { font-size: 0.75rem; color: var(--color-stone-light); text-transform: uppercase; letter-spacing: 0.06em; }
 .cart-item__qty { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
-.cart-item__qty button { width: 22px; height: 22px; border: 1px solid var(--color-line); background: none; font-size: 0.8rem; }
+.cart-item__qty button {
+  width: 22px; height: 22px; border: 1px solid var(--color-line); background: none; font-size: 0.8rem;
+  flex: 0 0 auto;
+  transition: transform var(--dur-press) var(--ease-out), border-color var(--transition);
+}
+/* Miniatura chica del carrito: el cartelito "Foto próximamente" no entra en 64px. */
+.cart-item__thumb .placeholder-art { width: 100%; height: 100%; }
+.cart-item__thumb .placeholder-art small { display: none; }
 .cart-item__qty-input {
   width: 46px; height: 22px; padding: 0; text-align: center;
   border: 1px solid var(--color-line); background: none; color: var(--color-ink);
   font: inherit; font-size: 0.8rem; -moz-appearance: textfield;
 }
 .cart-item__price { text-align: right; }
-.cart-item__price-old { font-size: 0.74rem; font-weight: 400; color: var(--color-stone-light); }
-.cart-item__disc { display: block; font-size: 0.66rem; font-weight: 600; color: var(--color-charcoal); margin-top: 0.15rem; }
-.cart-item__remove { font-size: 0.68rem; text-decoration: underline; color: var(--color-stone); margin-top: 0.4rem; display: inline-block; }
+.cart-item__price-old { font-size: 0.75rem; font-weight: 400; color: var(--color-stone-light); }
+.cart-item__disc { display: block; font-size: 0.75rem; font-weight: 600; color: var(--color-charcoal); margin-top: 0.15rem; }
+/* "Quitar" es un botón de verdad (antes era un <a> sin href: no se podía
+   alcanzar con el teclado). */
+.cart-item__remove {
+  background: none; border: 0; padding: 0; font: inherit;
+  font-size: 0.78rem; text-decoration: underline; color: var(--color-stone);
+  margin-top: 0.4rem; display: inline-block; cursor: pointer;
+}
 .cart-item__note { margin-top: 0.5rem; }
 .cart-item__note-input {
   width: 100%; padding: 0.5em 0.7em; border: 1px solid var(--color-line);
@@ -886,7 +967,7 @@ input, textarea, select { font-family: inherit; }
 }
 .cart-cupon__input:focus { outline: none; border-color: var(--color-charcoal); }
 .cart-cupon__input::placeholder { color: var(--color-stone-light); }
-.cart-cupon__feedback { font-size: 0.74rem; color: var(--color-charcoal); margin: -0.1rem 0 0.75rem; min-height: 1em; }
+.cart-cupon__feedback { font-size: 0.75rem; color: var(--color-charcoal); margin: -0.1rem 0 0.75rem; min-height: 1em; }
 .cart-cupon--applied {
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
   background: var(--color-accent-tint); border-radius: var(--radius);
@@ -894,13 +975,16 @@ input, textarea, select { font-family: inherit; }
   font-size: 0.82rem;
 }
 .cart-cupon--applied strong { font-family: var(--font-display); }
-.cart-cupon--applied a { font-size: 0.72rem; text-decoration: underline; color: var(--color-stone); cursor: pointer; }
+.cart-cupon--applied button {
+  background: none; border: 0; padding: 0; font: inherit;
+  font-size: 0.78rem; text-decoration: underline; color: var(--color-stone); cursor: pointer;
+}
 
 /* ---------- Formularios (checkout / contacto) ---------- */
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm) var(--space-md); }
 .form-grid .full { grid-column: 1 / -1; }
 .field label {
-  display: block; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
+  display: block; font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--color-stone); margin-bottom: 0.4em;
 }
 .field input, .field textarea, .field select {
@@ -936,7 +1020,8 @@ input, textarea, select { font-family: inherit; }
   padding: 0.7em 1.4em; font-size: 0.76rem; letter-spacing: 0.08em; text-transform: uppercase;
   font-family: var(--font-body); font-weight: 500; color: var(--color-stone);
   border-radius: 999px; cursor: pointer; text-align: center;
-  transition: all var(--transition);
+  transition: background var(--transition), border-color var(--transition), color var(--transition),
+    transform var(--dur-press) var(--ease-out);
 }
 .payment-method__btn:hover { border-color: var(--color-charcoal); color: var(--color-charcoal); }
 .payment-method__btn.active {
@@ -967,7 +1052,8 @@ input, textarea, select { font-family: inherit; }
   position: fixed; bottom: var(--space-md); left: 50%; transform: translate(-50%, 20px);
   background: var(--color-charcoal); color: var(--color-paper);
   padding: 0.9em 1.6em; border-radius: var(--radius); font-size: 0.85rem;
-  opacity: 0; pointer-events: none; transition: all var(--transition);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-enter) var(--ease-out), transform var(--dur-enter) var(--ease-out);
   z-index: 500; display: flex; align-items: center; gap: 0.6em;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
@@ -981,4 +1067,79 @@ input, textarea, select { font-family: inherit; }
   .category-card { flex-basis: 170px; }
   .footer-grid { grid-template-columns: 1fr; gap: var(--space-md); }
   .process-grid, .split { gap: var(--space-md); }
+}
+
+/* ==========================================================================
+   Revisión de diseño (2026-10-06): teclado, presión de botones y zonas de
+   toque. Criterios de Impeccable (touch targets, foco) y Emil Kowalski
+   (feedback de presión, movimiento reducido).
+   ========================================================================== */
+
+/* ---------- Teclado: anillo de foco visible (solo al navegar con teclado) ---------- */
+:focus-visible { outline: 2px solid var(--color-charcoal); outline-offset: 2px; }
+/* Sobre fondo bordó (header y footer) el anillo oscuro no se vería: lila. */
+.site-header :focus-visible,
+.site-footer :focus-visible { outline-color: var(--color-accent); }
+
+/* ---------- Presión: el botón "se hunde" apenas al tocarlo ---------- */
+.btn:not([disabled]):active,
+.size-pill:active,
+.tier-chip:active,
+.filter-tabs button:active,
+.lightbox__qty button:active,
+.cart-item__qty button:active,
+.payment-method__btn:active,
+.icon-btn:active,
+.nav-toggle:active,
+.lightbox__close:active,
+.color-multiselect__btn:active { transform: scale(.97); }
+
+/* ---------- Zonas de toque de 44px (celular / pantalla táctil) ----------
+   En mouse los controles quedan como siempre; en pantallas angostas o con
+   puntero "grueso" (dedo) cada control mide al menos 44×44. */
+@media (max-width: 720px), (pointer: coarse) {
+  .site-header__inner { padding: 1rem 0; }
+  .icon-btn, .nav-toggle { min-width: 44px; min-height: 44px; justify-content: center; }
+  .cart-count { top: 3px; right: -1px; }
+  .btn { min-height: 44px; }
+  .filter-tabs button { min-height: 44px; }
+
+  .lightbox__close { width: 44px; height: 44px; }
+  .lightbox__qty { flex-wrap: wrap; row-gap: 0.5rem; }
+  .lightbox__qty button { width: 44px; height: 44px; font-size: 1.1rem; }
+  .lightbox__qty-input { height: 44px; }
+  .lightbox__desc-toggle { min-height: 44px; display: inline-flex; align-items: center; }
+  .size-pill, .tier-chip { min-height: 44px; }
+  .size-pill { align-items: center; }
+  .lightbox__color-select, .color-multiselect__btn, .color-multiselect__row { min-height: 44px; }
+  .product-gallery__nav::after { content: ''; position: absolute; inset: -8px; }
+
+  .cart-item__qty button { width: 44px; height: 44px; font-size: 1.1rem; }
+  .cart-item__qty-input { flex: 0 1 48px; width: 48px; min-width: 32px; height: 44px; }
+  .cart-item__remove, .cart-cupon--applied button {
+    min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; margin-top: 0;
+  }
+  .cart-item__note-input, .cart-cupon__input { min-height: 44px; }
+}
+@media (max-width: 720px) {
+  /* Los controles de 44px necesitan un poco más de ancho útil. */
+  .lightbox__info { padding: 1.25rem; }
+  .cart-drawer__items { padding: var(--space-sm); }
+}
+
+/* ---------- Movimiento reducido: sin escalas ni desplazamientos nuevos ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .lightbox__panel,
+  .lightbox.open .lightbox__panel { transform: none; }
+  .btn:not([disabled]):active,
+  .size-pill:active,
+  .tier-chip:active,
+  .filter-tabs button:active,
+  .lightbox__qty button:active,
+  .cart-item__qty button:active,
+  .payment-method__btn:active,
+  .icon-btn:active,
+  .nav-toggle:active,
+  .lightbox__close:active,
+  .color-multiselect__btn:active { transform: none; }
 }
