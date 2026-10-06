@@ -298,41 +298,68 @@ input, textarea, select { font-family: inherit; }
   font-family: var(--font-script); font-style: normal; font-weight: 700; color: var(--color-charcoal);
   font-size: 1.55em; line-height: 0.8;
 }
+/* "tener" resaltada con un marcador lila (el lila del logo, --color-accent): una banda
+   plana apenas inclinada, detrás de la mitad de abajo de las letras, que sobresale un
+   poco por la izquierda. Para ajustarla: left/right (cuánto sobresale), bottom (qué tan
+   abajo), height (grosor) y el ángulo de rotate(). */
+.hero h1 em { position: relative; isolation: isolate; }
+.hero h1 em::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  left: -0.3em;
+  right: -0.08em;
+  bottom: 0.33em;
+  height: 0.34em;
+  background: var(--color-accent);
+  transform: rotate(-3deg);
+  pointer-events: none;
+}
+@media (max-width: 480px) {
+  /* En celular el título arranca pegado al borde: la banda sobresale menos por la izquierda. */
+  .hero h1 em::before { left: -0.2em; }
+}
 .hero p.lead { font-size: 1.05rem; max-width: 46ch; }
 .hero__actions { display: flex; gap: var(--space-sm); margin-top: var(--space-md); flex-wrap: wrap; }
-.hero__visual {
-  position: relative;
-  aspect-ratio: 4 / 5;
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: linear-gradient(160deg, var(--color-accent-tint), var(--color-paper) 70%);
+/* Zona inicial del Home (hero + franja de valores): el video de la impresora
+   ocupa todo el alto de la zona, pegado al borde derecho de la pantalla, y se
+   degrada hacia la izquierda (máscara) para fundirse con el fondo donde está el
+   texto. Para ajustar: width (cuánto ocupa), los % del degradé de mask-image
+   (dónde termina lo invisible y dónde empieza lo nítido) y object-position
+   (qué parte del cuadro vertical se ve). */
+.hero-stage { position: relative; isolation: isolate; overflow: hidden; }
+.hero-stage__media {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: min(70%, 1000px);
+  z-index: -1;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, transparent 22%, rgba(0,0,0,.12) 32%, rgba(0,0,0,.45) 46%, rgba(0,0,0,.8) 60%, #000 74%);
+  mask-image: linear-gradient(90deg, transparent 0%, transparent 22%, rgba(0,0,0,.12) 32%, rgba(0,0,0,.45) 46%, rgba(0,0,0,.8) 60%, #000 74%);
 }
-.hero__visual video {
+.hero-stage__media video {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
+  object-position: 50% 38%;
 }
-.hero__visual .layer-lines {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 10%;
+/* La franja de valores queda sobre el video: fondo claro translúcido con desenfoque
+   para que el texto oscuro se lea siempre. */
+.hero-stage .value-strip {
+  background: rgba(255, 255, 255, 0.78);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
-.hero__visual .layer-lines span {
-  display: block;
-  height: 3px;
-  background: rgba(53, 10, 6, 0.16);
-  border-radius: 2px;
-}
-.hero__visual .layer-lines span:nth-child(odd) { background: rgba(140, 110, 220, 0.55); }
-
 @media (max-width: 900px) {
   .hero__grid { grid-template-columns: 1fr; }
-  .hero__visual { aspect-ratio: 16/10; order: -1; }
+  /* En celular el video va arriba y se degrada hacia abajo, hacia donde empieza el texto. */
+  .hero-stage__media {
+    left: 0; bottom: auto; width: auto;
+    height: 470px;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 40%, rgba(0,0,0,.5) 54%, transparent 68%);
+    mask-image: linear-gradient(180deg, #000 0%, #000 40%, rgba(0,0,0,.5) 54%, transparent 68%);
+  }
+  .hero-stage__media video { object-position: 55% 40%; }
 }
 
 /* ---------- Marquee de valores ---------- */
@@ -362,16 +389,40 @@ input, textarea, select { font-family: inherit; }
 /* ---------- Carrusel de categorías (home) ----------
    La tira (track) se arma en JS a partir de STRATO_CATEGORIES, duplicada
    una vez, y se desplaza sola con esta animación en loop infinito; se
-   pausa al pasar el mouse para poder leer/clickear con comodidad. */
+   pausa al pasar el mouse para poder leer/clickear con comodidad.
+   Las tarjetas ocupan TODO el alto de la sección (pegadas a la zona inicial de
+   arriba y a "La selección" de abajo), a todo el ancho de la pantalla, con un
+   espacio entre una y otra. El título de la sección va encima, arriba a la
+   izquierda, con una sombra bordó para que se lea. Para ajustar: el alto de
+   .category-carousel y el ancho de .category-card (flex-basis). */
+.category-band { position: relative; background: var(--color-charcoal); } /* el espacio entre tarjetas es bordó, no blanco */
+.category-band::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; z-index: 2;
+  height: clamp(170px, 16vw, 210px);
+  background: linear-gradient(180deg, rgba(36, 8, 5, 0.84) 0%, rgba(36, 8, 5, 0.5) 55%, rgba(36, 8, 5, 0) 100%);
+  pointer-events: none;
+}
+.category-band__head {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+  padding-top: clamp(1.5rem, 2.8vw, 2.25rem);
+  pointer-events: none;
+}
+.category-band__head .eyebrow { color: var(--color-accent); }
+.category-band__head .eyebrow::before { background: var(--color-accent); }
+.category-band__head h2 { color: var(--color-paper); margin: var(--space-xs) 0 0; }
 .category-carousel {
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+  height: clamp(420px, 34vw, 500px);
 }
 .category-carousel__track {
   display: flex;
   gap: var(--space-sm);
+  /* El mismo espacio al final que entre tarjetas: así la mitad exacta de la tira
+     (lo que se desplaza) coincide con el largo de una vuelta y el loop no da saltito. */
+  padding-right: var(--space-sm);
   width: max-content;
+  height: 100%;
   animation-name: category-scroll;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
@@ -383,25 +434,24 @@ input, textarea, select { font-family: inherit; }
 }
 .category-card {
   position: relative;
-  flex: 0 0 260px;
-  aspect-ratio: 3/4;
-  border-radius: var(--radius);
+  flex: 0 0 clamp(230px, 20vw, 300px);
   overflow: hidden;
   display: flex;
   align-items: flex-end;
-  padding: var(--space-sm);
-  transition: transform var(--dur-enter) var(--ease-out);
+  padding: var(--space-sm) 1.25rem 1.5rem;
   background-size: cover;
   background-position: center;
 }
-.category-card:hover { transform: translateY(-4px); }
+.category-card:focus-visible { outline: 3px solid var(--color-accent); outline-offset: -6px; }
 .category-card__label {
   position: relative;
   z-index: 1;
   color: #fff;
   font-family: var(--font-display);
-  font-size: 1.15rem;
+  font-size: 1.25rem;
+  transition: transform var(--dur-enter) var(--ease-out);
 }
+.category-card:hover .category-card__label { transform: translateY(-4px); }
 .category-card__label span {
   display: block;
   font-family: var(--font-body);
@@ -423,7 +473,7 @@ input, textarea, select { font-family: inherit; }
 .category-card--g3 { background: linear-gradient(150deg,#3f4a3a,#6f8065); }
 .category-card--g4 { background: linear-gradient(150deg,#3a2f42,#7a5f8a); }
 @media (max-width: 900px) {
-  .category-card { flex-basis: 210px; }
+  .category-card { flex-basis: 220px; }
 }
 
 /* ---------- Grid de productos ---------- */
@@ -650,12 +700,9 @@ input, textarea, select { font-family: inherit; }
 .page-home .section--tight { padding: 2.5rem 0; }
 .page-home .section-head { margin-bottom: var(--space-md); }
 .page-home .cta-band { padding: 3rem 0; }
-@media (min-width: 901px) {
-  /* Video más bajo: el bloque de texto queda más cerca del header y de la franja de valores */
-  .page-home .hero__visual { aspect-ratio: 1 / 1; }
-}
 @media (max-width: 900px) {
-  .page-home .hero { padding: var(--space-sm) 0 var(--space-md); }
+  /* Arriba queda libre el espacio donde se ve el video (el alto va con .hero-stage__media) */
+  .page-home .hero { padding: 320px 0 var(--space-md); }
   .page-home .section,
   .page-home .section--tight { padding: 2rem 0; }
 }
@@ -1176,7 +1223,8 @@ input, textarea, select { font-family: inherit; }
 
 /* ---------- Responsive extra ---------- */
 @media (max-width: 720px) {
-  .category-card { flex-basis: 170px; }
+  .category-card { flex-basis: 190px; }
+  .category-carousel { height: 400px; }
   .footer-grid { grid-template-columns: 1fr; gap: var(--space-md); }
   .process-grid, .split { gap: var(--space-md); }
 }
