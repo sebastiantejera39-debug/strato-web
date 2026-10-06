@@ -392,25 +392,19 @@ input, textarea, select { font-family: inherit; }
    pausa al pasar el mouse para poder leer/clickear con comodidad.
    Las tarjetas ocupan TODO el alto de la sección (pegadas a la zona inicial de
    arriba y a "La selección" de abajo), a todo el ancho de la pantalla, con un
-   espacio entre una y otra. El título de la sección va encima, arriba a la
-   izquierda, con una sombra bordó para que se lea. Para ajustar: el alto de
-   .category-carousel y el ancho de .category-card (flex-basis). */
-.category-band { position: relative; background: var(--color-charcoal); } /* el espacio entre tarjetas es bordó, no blanco */
-.category-band::before {
-  content: '';
-  position: absolute; top: 0; left: 0; right: 0; z-index: 2;
-  height: clamp(170px, 16vw, 210px);
-  background: linear-gradient(180deg, rgba(36, 8, 5, 0.84) 0%, rgba(36, 8, 5, 0.5) 55%, rgba(36, 8, 5, 0) 100%);
-  pointer-events: none;
-}
+   espacio blanco entre una y otra (como si flotaran sobre el fondo de la página).
+   El título de la sección va encima, arriba a la izquierda; las sombras para que
+   se lea van dentro de cada tarjeta. Para ajustar: el alto de .category-carousel
+   y el ancho de .category-card (flex-basis). */
+.category-band { position: relative; }
 .category-band__head {
   position: absolute; top: 0; left: 0; right: 0; z-index: 3;
   padding-top: clamp(1.5rem, 2.8vw, 2.25rem);
   pointer-events: none;
 }
-.category-band__head .eyebrow { color: var(--color-accent); }
+.category-band__head .eyebrow { color: var(--color-accent); text-shadow: 0 0 8px rgba(36, 8, 5, 0.8), 0 0 2px rgba(36, 8, 5, 0.85), 0 0 1px rgba(36, 8, 5, 0.7); }
 .category-band__head .eyebrow::before { background: var(--color-accent); }
-.category-band__head h2 { color: var(--color-paper); margin: var(--space-xs) 0 0; }
+.category-band__head h2 { color: var(--color-paper); margin: var(--space-xs) 0 0; text-shadow: 0 1px 14px rgba(36, 8, 5, 0.7), 0 0 3px rgba(36, 8, 5, 0.7), 0 0 1px rgba(36, 8, 5, 0.6); }
 .category-carousel {
   overflow: hidden;
   height: clamp(420px, 34vw, 500px);
@@ -462,9 +456,12 @@ input, textarea, select { font-family: inherit; }
   margin-top: 2px;
 }
 .category-card::before {
+  /* Sombra arriba (para que se lea el título de la sección que pasa por encima) y abajo
+     (para el nombre de la categoría); va dentro de cada tarjeta, así el espacio blanco entre
+     tarjetas queda limpio. */
   content: '';
   position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(53,10,6,0.05), rgba(53,10,6,0.68));
+  background: linear-gradient(180deg, rgba(36,8,5,0.86) 0%, rgba(36,8,5,0.55) 16%, rgba(36,8,5,0.08) 36%, rgba(53,10,6,0.08) 52%, rgba(53,10,6,0.68) 100%);
 }
 /* Degradés de respaldo para categorías sin foto de portada todavía */
 .category-card--g0 { background: linear-gradient(150deg,#3a332b,#6b4f3a); }
