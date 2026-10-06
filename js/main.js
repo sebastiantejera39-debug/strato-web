@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STRATO — comportamiento compartido de la interfaz
+   STORGE LAB — comportamiento compartido de la interfaz
    (menú mobile, año del footer, animación simple al hacer scroll)
    ========================================================================== */
 
@@ -47,6 +47,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // Lista "Categorías" del pie de página: en TODAS las páginas que la tienen
+  // (Inicio, Catálogo, Nosotros, Contacto), con las categorías reales.
+  stratoRenderFooterCategories();
+
   if (typeof stratoInitCartUI === "function") stratoInitCartUI();
   if (typeof stratoInitProductUI === "function") stratoInitProductUI();
 
@@ -54,3 +58,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   // STRATO_PRODUCTS/STRATO_CATEGORIES con los datos definitivos.
   document.dispatchEvent(new CustomEvent("strato:catalog-ready"));
 });
+
+/* Lista "Categorías" del pie de página. Sale de STRATO_CATEGORIES (la lista real
+   de Supabase, o la de respaldo de products.js si no respondió), así una categoría
+   nueva o renombrada desde el panel admin aparece sola en el pie de TODAS las
+   páginas. Antes solo se actualizaba donde estaba cargado catalog.js (Inicio y
+   Catálogo) y en Nosotros y Contacto quedaba la lista fija del HTML. Es seguro
+   que catalog.js haga lo mismo: el resultado es idéntico. */
+function stratoRenderFooterCategories() {
+  const list = document.getElementById("footerCategories");
+  if (!list || typeof STRATO_CATEGORIES === "undefined" || !STRATO_CATEGORIES.length) return;
+  const esc = (s) =>
+    String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  list.innerHTML = STRATO_CATEGORIES.map(
+    (c) => '<li><a href="catalogo.html?cat=' + encodeURIComponent(c.slug) + '">' + esc(c.name) + "</a></li>"
+  ).join("");
+}
