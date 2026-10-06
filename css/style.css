@@ -188,7 +188,9 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.3rem 0;
+  /* Solo arriba y abajo: el relleno de los costados lo pone .container
+     (antes "padding: 1.3rem 0" lo pisaba y el logo quedaba pegado al borde). */
+  padding-block: 1.3rem;
 }
 .logo {
   display: flex;
@@ -256,7 +258,7 @@ input, textarea, select { font-family: inherit; }
   font-family: var(--font-body);
   line-height: 1;
 }
-.nav-toggle { display: none; background: none; border: none; transition: transform var(--dur-press) var(--ease-out); }
+.nav-toggle { display: none; background: none; border: none; color: var(--color-bg); transition: transform var(--dur-press) var(--ease-out); }
 .nav-toggle svg { width: 24px; height: 24px; }
 
 @media (max-width: 860px) {
@@ -1255,7 +1257,10 @@ input, textarea, select { font-family: inherit; }
    En mouse los controles quedan como siempre; en pantallas angostas o con
    puntero "grueso" (dedo) cada control mide al menos 44×44. */
 @media (max-width: 720px), (pointer: coarse) {
-  .site-header__inner { padding: 1rem 0; }
+  .site-header__inner { padding-block: 1rem; }
+  /* El botón mide 44 px pero el ícono 22-24: se corre 10 px hacia el borde para
+     que el ícono (no el botón) quede alineado con el margen, como el logo. */
+  .header-actions { margin-right: -10px; }
   .icon-btn, .nav-toggle { min-width: 44px; min-height: 44px; justify-content: center; }
   .cart-count { top: 3px; right: -1px; }
   .btn { min-height: 44px; }
