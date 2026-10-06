@@ -187,6 +187,8 @@
 <script src="js/cart.js"></script>
 <script src="js/main.js"></script>
 <script>
+  // Solo para MOSTRAR el recargo en pantalla. Lo que se cobra lo decide la función
+  // netlify/functions/create-preference.js (variable MP_RECARGO_PCT, por defecto 8): deben coincidir.
   const MP_RECARGO_PCT = 8;
   let checkoutMethod = "mp";
 
@@ -302,12 +304,62 @@
 
   async function pagarConMercadoPago(lines, datosComunes) {
     const submitBtn = document.getElementById("checkoutSubmitBtn");
-    const items = lines.map((l) => ({
-      nombre: l.sizeName ? l.product.name + " — " + l.sizeName : l.product.name,
+    const rehabilitarBoton = () => {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Pagar con Mercado Pago"; }
+    };
+
+    // Los cupones todavía no viajan a Mercado Pago (la función calcula el total sola).
+    if (stratoCartDescuento() > 0) {
+      alert("Por ahora los cupones no se pueden usar con Mercado Pago. Quitá el cupón o elegí Transferencia bancaria.");
+      rehabilitarBoton();
+      return;
+    }
+
+    // Lo que el cliente está viendo en pantalla (el mismo cálculo que updateTotals).
+    const baseTotal = stratoCartTotal();
+    const totalEnPantalla = baseTotal + Math.round(baseTotal * (MP_RECARGO_PCT / 100));
+
+    // Al servidor van SOLO producto, tamaño, color y cantidad. Los precios y el recargo
+    // los calcula la función con los datos reales de Supabase: lo que acá se muestre
+    // no puede cambiar lo que se cobra.
+    const cart = lines.map((l) => ({
+      id: l.product.id,
+      size: l.sizeName || null,
       color: l.color || null,
       qty: l.qty,
-      precio: l.unit || 0, // ya con el descuento por cantidad aplicado
     }));
+
+    let data;
+    try {
+      const resp = await fetch("/api/create-preference", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cart: cart }),
+      });
+      data = await resp.json().catch(() => null);
+      if (!resp.ok || !data || !data.init_point) {
+        const e = new Error((data && data.error) || "No se pudo generar el link de pago");
+        e.userMessage = data && typeof data.error === "string" ? data.error : null;
+        throw e;
+      }
+    } catch (err) {
+      console.error("Error al crear preferencia de Mercado Pago:", err);
+      alert(err.userMessage || "No pudimos conectar con Mercado Pago. Probá de nuevo en unos segundos, o elegí Transferencia bancaria.");
+      rehabilitarBoton();
+      return;
+    }
+
+    // Si el total del servidor no coincide con el que se le mostró al cliente (cambió un
+    // precio o un descuento mientras tanto), no lo mandamos a pagar un monto distinto al
+    // que vio: actualizamos el resumen y que confirme de nuevo.
+    if (Number(data.total) !== totalEnPantalla) {
+      try { if (typeof stratoLoadLiveCatalog === "function") await stratoLoadLiveCatalog(); } catch (e) { /* se ignora */ }
+      renderSummary();
+      alert("Los precios se actualizaron mientras armabas el pedido. Revisá el resumen (el total ahora es $U " +
+        Number(data.total).toLocaleString("es-UY") + ") y confirmá de nuevo.");
+      rehabilitarBoton();
+      return;
+    }
 
     // Guardamos el pedido en Supabase (best-effort) antes de ir a Mercado Pago,
     // así queda registrado aunque el cliente no vuelva a completar el pago.
@@ -315,27 +367,13 @@
       await stratoInsertPedido(Object.assign({}, datosComunes, {
         pago: "Mercado Pago",
         items: pedidoItems(lines),
+        subtotal: data.subtotal,
       }));
     }
 
-    try {
-      const resp = await fetch("/api/create-preference", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cart: items, recargoPct: MP_RECARGO_PCT }),
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.init_point) {
-        throw new Error((data && data.error) || "No se pudo generar el link de pago");
-      }
-      // No limpiamos el carrito acá: si el cliente abandona el pago en Mercado
-      // Pago y vuelve, el carrito sigue disponible para reintentar.
-      window.location.href = data.init_point;
-    } catch (err) {
-      console.error("Error al crear preferencia de Mercado Pago:", err);
-      alert("No pudimos conectar con Mercado Pago. Probá de nuevo en unos segundos, o elegí Transferencia Bancaria.");
-      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Pagar con Mercado Pago"; }
-    }
+    // No limpiamos el carrito acá: si el cliente abandona el pago en Mercado
+    // Pago y vuelve, el carrito sigue disponible para reintentar.
+    window.location.href = data.init_point;
   }
 
   async function pagarPorTransferencia(lines, datosComunes, subtotal, descuento, total) {
