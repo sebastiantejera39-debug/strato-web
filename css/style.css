@@ -572,6 +572,70 @@ input, textarea, select { font-family: inherit; }
 }
 @media (max-width: 800px) { .process-grid { grid-template-columns: 1fr; gap: var(--space-lg); } }
 
+/* ---------- Proceso con fotos a ancho completo (Nosotros) ----------
+   Banda pegada al video de "Nuestra historia": tres fotos de objetos impresos, una por
+   paso, que llenan todo el ancho de la pantalla sin márgenes ni huecos entre sí. Una
+   capa oscura de abajo hacia arriba (bordó) asegura que el texto se lea. El encuadre de
+   cada foto se mueve con --bg-pos y --bg-zoom (en el HTML de cada tarjeta). */
+.process-band { position: relative; background: var(--color-charcoal); scroll-margin-top: 4.5rem; }
+/* El título va encima de las fotos (no arriba de ellas): así no hay franja en blanco. */
+.process-band::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; z-index: 1;
+  height: clamp(200px, 22vw, 260px);
+  background: linear-gradient(180deg, rgba(36, 8, 5, 0.86) 0%, rgba(36, 8, 5, 0.62) 50%, rgba(36, 8, 5, 0) 100%);
+  pointer-events: none;
+}
+.process-band__head {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 2;
+  padding: clamp(1.75rem, 3.5vw, 3rem) clamp(1.5rem, 3vw, 3rem) 0;
+  text-align: left; /* alineado con el texto de las tarjetas; sobre la zona despejada de la foto 1 */
+  color: var(--color-paper);
+}
+.process-band__head .eyebrow { color: var(--color-accent); }
+.process-band__head .eyebrow::before { background: var(--color-accent); }
+.process-band__head h2 { color: var(--color-paper); margin: var(--space-xs) 0 0; }
+.process-band__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
+.process-step--photo {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: clamp(540px, 44vw, 680px);
+  background: var(--color-charcoal);
+  color: var(--color-paper);
+}
+.process-step__bg {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: var(--bg-pos, 50% 50%);
+  /* Acercamiento hacia abajo: sube el objeto para que no quede tapado por el texto. */
+  transform: scale(var(--bg-zoom, 1));
+  transform-origin: 50% 100%;
+}
+.process-step--photo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(0deg, rgba(36, 8, 5, 0.94) 0%, rgba(36, 8, 5, 0.82) 34%, rgba(36, 8, 5, 0.3) 62%, rgba(36, 8, 5, 0.08) 100%);
+}
+.process-step__body { padding: var(--space-md) clamp(1.5rem, 3vw, 3rem) clamp(1.75rem, 3.5vw, 3rem); }
+.process-step--photo .num { -webkit-text-stroke-color: var(--color-paper); }
+.process-step--photo h3 { color: var(--color-paper); }
+.process-step--photo p { color: rgba(255, 255, 255, 0.92); max-width: 36ch; }
+@media (max-width: 900px) {
+  /* Tablet y celular: una foto debajo de otra, cada una a todo el ancho y sin huecos. */
+  .process-band__grid { grid-template-columns: 1fr; }
+  .process-step--photo { min-height: clamp(520px, 72vw, 640px); }
+}
+
 .split {
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-lg); align-items: center;
 }
