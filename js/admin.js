@@ -670,11 +670,28 @@
       }
 
       function onImgLoad() {
+        // La imagen se muestra con un tamaño exacto que entre en el cuadro (no
+        // más ancho que el espacio disponible ni más alto que 480 px). Antes se
+        // dejaba al CSS (max-width: 480px), pero el cuadro mide menos de 480 px
+        // (520 - 48 de relleno = 472; en celular, bastante menos): la imagen
+        // quedaba más ancha que el cuadro, el recorte se calculaba con una
+        // escala equivocada y se pasaba del borde inferior de la foto, y el
+        // sobrante salía negro en el JPG (franja negra abajo de la foto).
+        const wrap = stage.parentElement;
+        const wcs = getComputedStyle(wrap);
+        const availW = Math.max(
+          120,
+          wrap.clientWidth - parseFloat(wcs.paddingLeft) - parseFloat(wcs.paddingRight)
+        );
+        const fit = Math.min(1, availW / imgEl.naturalWidth, 480 / imgEl.naturalHeight);
+        imgEl.style.width = Math.max(1, Math.round(imgEl.naturalWidth * fit)) + "px";
+        imgEl.style.height = Math.max(1, Math.round(imgEl.naturalHeight * fit)) + "px";
         // Se espera un frame para que el navegador termine de acomodar el
-        // tamaño renderizado de la imagen (max-width/max-height) antes de medirlo.
+        // tamaño renderizado de la imagen antes de medirlo.
         requestAnimationFrame(() => {
-          stageW = stage.clientWidth;
-          stageH = stage.clientHeight;
+          // Se mide la imagen misma (no el contenedor), que es lo que se recorta.
+          stageW = imgEl.clientWidth;
+          stageH = imgEl.clientHeight;
           const size0 = Math.min(stageW, stageH);
           box = { left: (stageW - size0) / 2, top: (stageH - size0) / 2, size: size0 };
           paintBox();
@@ -737,19 +754,31 @@
         confirmBtn.removeEventListener("click", onConfirm);
         cancelBtn.removeEventListener("click", onCancel);
         imgEl.src = "";
+        imgEl.style.width = "";
+        imgEl.style.height = "";
       }
 
       function onConfirm() {
-        const scale = imgEl.naturalWidth / stageW;
-        const sx = box.left * scale;
-        const sy = box.top * scale;
-        const ssize = box.size * scale;
-        const outSize = Math.min(Math.round(ssize) || MIN_SIZE, MAX_OUTPUT);
+        const natW = imgEl.naturalWidth;
+        const natH = imgEl.naturalHeight;
+        // Escala por eje (el ancho y el alto mostrados se redondean distinto) y
+        // el recuadro nunca sale de la foto original.
+        const scaleX = natW / stageW;
+        const scaleY = natH / stageH;
+        const sx = clamp(box.left * scaleX, 0, natW - 1);
+        const sy = clamp(box.top * scaleY, 0, natH - 1);
+        const sw = Math.min(box.size * scaleX, natW - sx);
+        const sh = Math.min(box.size * scaleY, natH - sy);
+        const outSize = Math.min(Math.round(Math.min(sw, sh)) || MIN_SIZE, MAX_OUTPUT);
         const canvas = document.createElement("canvas");
         canvas.width = outSize;
         canvas.height = outSize;
         const ctx = canvas.getContext("2d");
-        ctx.drawImage(imgEl, sx, sy, ssize, ssize, 0, 0, outSize, outSize);
+        // Fondo blanco de seguridad: si algo quedara sin cubrir, que sea
+        // blanco y no negro (un JPG pasa lo transparente a negro).
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, outSize, outSize);
+        ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, outSize, outSize);
         canvas.toBlob(
           (blob) => {
             cleanup();

@@ -8,7 +8,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   const nav = document.querySelector(".main-nav");
   const toggle = document.querySelector(".nav-toggle");
   if (toggle && nav) {
-    toggle.addEventListener("click", () => nav.classList.toggle("open"));
+    const list = nav.querySelector("ul");
+    if (list) {
+      if (!list.id) list.id = "mainNavList";
+      toggle.setAttribute("aria-controls", list.id);
+    }
+    toggle.setAttribute("aria-expanded", "false");
+    const setNavOpen = (open) => {
+      nav.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", open ? "Cerrar menú" : "Abrir menú");
+    };
+    toggle.addEventListener("click", () => setNavOpen(!nav.classList.contains("open")));
+    // Escape cierra el menú y devuelve el foco al botón.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && nav.classList.contains("open")) {
+        setNavOpen(false);
+        toggle.focus();
+      }
+    });
   }
 
   // Año dinámico en el footer
