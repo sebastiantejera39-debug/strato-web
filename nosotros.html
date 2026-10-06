@@ -72,29 +72,37 @@
     </script>
   </section>
 
-  <section class="section" id="proceso">
-    <div class="container">
-      <div class="section-head center reveal in" style="margin-left:auto;margin-right:auto;">
-        <span class="eyebrow">Proceso</span>
-        <h2>Cómo se hace cada pieza</h2>
-      </div>
-      <div class="process-grid reveal in">
-        <div class="process-step">
+  <!-- PROCESO: banda a ancho completo, pegada al video de arriba, sin espacios en blanco -->
+  <section class="process-band" id="proceso" aria-labelledby="proceso-titulo">
+    <div class="process-band__head">
+      <span class="eyebrow">Proceso</span>
+      <h2 id="proceso-titulo">Cómo se hace cada pieza</h2>
+    </div>
+    <div class="process-band__grid">
+      <article class="process-step process-step--photo" style="--bg-pos:50% 40%;--bg-zoom:1.25">
+        <img class="process-step__bg" src="images/proceso-1-diseno.jpg" alt="" width="900" height="1117" loading="lazy" decoding="async">
+        <div class="process-step__body">
           <div class="num">01</div>
           <h3>Diseño</h3>
           <p>Elegimos o modelamos la pieza pensando en la impresión: sin soportes complicados, con la resistencia justa para el uso diario.</p>
         </div>
-        <div class="process-step">
+      </article>
+      <article class="process-step process-step--photo" style="--bg-pos:50% 30%;--bg-zoom:1.15">
+        <img class="process-step__bg" src="images/proceso-2-impresion.jpg" alt="" width="900" height="1117" loading="lazy" decoding="async">
+        <div class="process-step__body">
           <div class="num">02</div>
           <h3>Impresión multicolor</h3>
           <p>Imprimimos en PLA, capa por capa, combinando colores en la misma pieza sin necesidad de pintar después.</p>
         </div>
-        <div class="process-step">
+      </article>
+      <article class="process-step process-step--photo" style="--bg-pos:50% 100%">
+        <img class="process-step__bg" src="images/proceso-3-terminacion.jpg" alt="" width="768" height="1364" loading="lazy" decoding="async">
+        <div class="process-step__body">
           <div class="num">03</div>
           <h3>Control y terminación</h3>
           <p>Revisamos cada pieza, sacamos soportes y dejamos la terminación prolija antes de empacar.</p>
         </div>
-      </div>
+      </article>
     </div>
   </section>
 
