@@ -672,19 +672,17 @@ input, textarea, select { font-family: inherit; }
 .cta-band .eyebrow { color: var(--color-accent); }
 .cta-band .eyebrow::before { background: var(--color-accent); }
 
-/* ---------- Nosotros: video de fondo en "Nuestra historia" ----------
-   Recorte horizontal del cabezal imprimiendo, a todo el ancho y alto de la
-   sección, levemente transparente sobre bordó. Una capa oscura más fuerte del
-   lado del texto asegura que se lea. Para ajustar: --about-video-opacity (cuánto
-   se ve el video) y el degradé de .about-video::after. */
-.about-video {
+/* ---------- Nosotros: video de fondo detrás del título y "Nuestra historia" ----------
+   Recorte horizontal del cabezal imprimiendo, a todo el ancho y alto de las dos
+   primeras secciones juntas (.about-intro), levemente transparente sobre bordó. Una
+   capa oscura más fuerte del lado del texto asegura que se lea. Para ajustar:
+   --about-video-opacity (cuánto se ve el video), el degradé de .about-intro::after y
+   object-position del <video> (qué parte del plano se ve). */
+.about-intro {
   --about-video-opacity: 0.8;
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  min-height: clamp(360px, 30vw, 440px);
   background: var(--color-charcoal);
   color: var(--color-paper);
 }
@@ -697,22 +695,29 @@ input, textarea, select { font-family: inherit; }
   object-position: 50% 85%;
   opacity: var(--about-video-opacity);
 }
-.about-video::after {
+.about-intro::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: -1;
   background: linear-gradient(90deg, rgba(36, 8, 5, 0.9) 0%, rgba(36, 8, 5, 0.78) 50%, rgba(36, 8, 5, 0.3) 78%, rgba(36, 8, 5, 0.1) 100%);
 }
-.about-video .container { width: 100%; }
-.about-video .eyebrow { color: var(--color-accent); }
-.about-video .eyebrow::before { background: var(--color-accent); }
-.about-video h2 { color: var(--color-paper); }
-.about-video p { color: rgba(255, 255, 255, 0.9); }
+/* Las dos secciones quedan transparentes: se ve el mismo video detrás de las dos. */
+.about-intro .page-banner { border-bottom: 0; padding-bottom: var(--space-sm); }
+.about-intro .eyebrow { color: var(--color-accent); }
+.about-intro .eyebrow::before { background: var(--color-accent); }
+.about-intro h1,
+.about-intro h2 { color: var(--color-paper); }
+.about-intro p,
+.about-intro .muted { color: rgba(255, 255, 255, 0.9); }
 @media (max-width: 900px) {
   /* En celular el texto ocupa todo el ancho: capa pareja. */
-  .about-video::after { background: rgba(36, 8, 5, 0.6); }
+  .about-intro::after { background: rgba(36, 8, 5, 0.6); }
   .about-video__media video { object-position: 72% 50%; }
+}
+@media (max-width: 640px) {
+  /* Versión vertical del video: se muestra la impresora y el barco en el medio del bloque. */
+  .about-video__media video { object-position: 55% 50%; }
 }
 
 /* ---------- Footer ---------- */
