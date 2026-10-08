@@ -709,10 +709,18 @@ async function preview(productId) {
   let validacion = null;
   if (items[0]) {
     const v = await ml.post('/items/validate', items[0].built.payload);
-    validacion = v.ok || v.status === 204
-      ? { ok: true }
+    const causes = v.data && Array.isArray(v.data.cause) ? v.data.cause : [];
+    // ML a veces responde 400 "validation_error" con SOLO avisos (ningún error real):
+    // en ese caso el aviso se puede publicar igual; se muestran los avisos aparte.
+    const onlyWarnings = !v.ok && causes.length > 0 && causes.every((c) => c && c.type === 'warning');
+    validacion = v.ok || v.status === 204 || onlyWarnings
+      ? { ok: true, con_avisos: onlyWarnings }
       : { ok: false, mensaje: mlErrorMessage(v.data), detalle: JSON.stringify(v.data || {}).slice(0, 2000) };
-    if (v.ok) mlWarnings(v.data).forEach((w) => avisos.push('Aviso de ML: ' + w));
+    if (validacion.ok) {
+      mlWarnings(v.data)
+        .filter((w) => !/has not mode me1/i.test(w)) // me1 es el sistema viejo de envíos: no aplica
+        .forEach((w) => avisos.push('Aviso de ML: ' + (/mandatory free shipping/i.test(w) ? 'el envío gratis queda activado (obligatorio para este precio).' : w)));
+    }
   }
   // Qué formas de envío tiene habilitadas la cuenta.
   let envios = null;
