@@ -325,7 +325,7 @@
       : "";
     const val = pv.validacion
       ? pv.validacion.ok
-        ? '<p class="ml-ok"><strong>✓ Mercado Libre validó el aviso.</strong> Se puede publicar.</p>'
+        ? '<p class="ml-ok"><strong>✓ Mercado Libre validó el aviso' + (pv.validacion.con_avisos ? ' (con avisos, mirá \"Para revisar\")' : '') + '.</strong> Se puede publicar.</p>'
         : '<p class="ml-err"><strong>Mercado Libre todavía no lo acepta:</strong> ' + esc(pv.validacion.mensaje) + "</p>" +
           (pv.validacion.detalle ? '<details style="margin:-4px 0 10px"><summary class="muted" style="cursor:pointer;font-size:12px">Ver respuesta completa de ML</summary><pre>' + esc(pv.validacion.detalle) + "</pre></details>" : "")
       : "";
