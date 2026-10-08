@@ -154,16 +154,17 @@ async function requireAdmin(event) {
 
 function mlErrorMessage(data) {
   if (!data) return 'sin respuesta';
-  const parts = [];
-  if (Array.isArray(data.cause)) {
-    data.cause.forEach((c) => {
-      if (c && c.message && (c.type === 'error' || !c.type)) parts.push(String(c.message));
-    });
-  }
+  const fmt = (c) => (c.code ? '[' + c.code + '] ' : '') + String(c.message || '');
+  const causes = Array.isArray(data.cause) ? data.cause.filter((c) => c && (c.message || c.code)) : [];
+  let parts = causes.filter((c) => c.type !== 'warning').map(fmt);
+  // Si ML solo devolvió avisos, se muestran igual: alguno es el motivo del rechazo.
+  if (!parts.length && causes.length) parts = causes.map(fmt);
+  const head = data.message && !/^validation error$/i.test(String(data.message)) ? String(data.message) : '';
+  if (head) parts.unshift(head);
   if (!parts.length && data.message) parts.push(String(data.message));
   if (!parts.length && data.error) parts.push(String(data.error));
   if (!parts.length && data.raw) parts.push(String(data.raw));
-  return parts.join(' · ').slice(0, 900) || 'error desconocido';
+  return parts.join(' · ').slice(0, 1200) || 'error desconocido';
 }
 
 function mlWarnings(data) {
@@ -710,8 +711,20 @@ async function preview(productId) {
     const v = await ml.post('/items/validate', items[0].built.payload);
     validacion = v.ok || v.status === 204
       ? { ok: true }
-      : { ok: false, mensaje: mlErrorMessage(v.data) };
-    mlWarnings(v.data).forEach((w) => avisos.push('Aviso de ML: ' + w));
+      : { ok: false, mensaje: mlErrorMessage(v.data), detalle: JSON.stringify(v.data || {}).slice(0, 2000) };
+    if (v.ok) mlWarnings(v.data).forEach((w) => avisos.push('Aviso de ML: ' + w));
+  }
+  // Qué formas de envío tiene habilitadas la cuenta.
+  let envios = null;
+  const sp = await ml.get('/users/' + access.account.ml_user_id + '/shipping_preferences');
+  if (sp.ok && sp.data) {
+    const modos = Array.isArray(sp.data.modes) ? sp.data.modes : [];
+    envios = { modos };
+    if (!modos.includes('me2')) {
+      avisos.push('Tu cuenta de Mercado Libre no tiene Mercado Envíos (me2) habilitado' +
+        (modos.length ? ' (tiene: ' + modos.join(', ') + ')' : '') +
+        '. Para el envío gratis automático hay que activarlo en Mercado Libre → Configuración → Envíos.');
+    }
   }
   const missing = items[0] ? items[0].built.missing : [];
   return {
@@ -735,6 +748,7 @@ async function preview(productId) {
     descripcion: desc,
     avisos,
     validacion,
+    envios,
   };
 }
 
