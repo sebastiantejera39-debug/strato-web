@@ -118,6 +118,27 @@
   /* ---- Filamentos, tamaños, escalones de descuento ---- */
   .fil-kg-preview { padding: 10px 12px; background: var(--bg-section); border: 1px solid var(--border); border-radius: 3px; font-size: 14px; margin-bottom: 16px; min-height: 40px; display: flex; align-items: center; }
   .sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.25); flex: 0 0 auto; vertical-align: -1px; margin-right: 6px; }
+
+  /* ---- Mercado Libre ---- */
+  .ml-status { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .ml-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }
+  .ml-dot.on { background: var(--ok); }
+  .ml-dot.warn { background: var(--danger); }
+  .ml-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ml-pub { font-size: 12px; margin-bottom: 4px; }
+  .ml-pub a { color: var(--accent); }
+  .ml-err { color: var(--danger); font-size: 12px; margin-top: 2px; }
+  .ml-badge { display: inline-block; border-radius: 10px; padding: 1px 8px; font-size: 11px; background: rgba(53,10,6,0.08); color: var(--accent); }
+  .ml-badge.active { background: rgba(62,125,82,0.14); color: var(--ok); }
+  .ml-badge.paused, .ml-badge.closed, .ml-badge.error { background: rgba(179,57,43,0.12); color: var(--danger); }
+  .ml-example { padding: 10px 12px; background: var(--bg-section); border: 1px solid var(--border); border-radius: 3px; font-size: 13px; margin-bottom: 16px; }
+  .ml-box { background: #fff; border: 1px solid var(--border); border-radius: 3px; padding: 14px 16px; margin: 6px 0; font-size: 13px; }
+  .ml-box h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin: 10px 0 6px; }
+  .ml-box h4:first-child { margin-top: 0; }
+  .ml-box ul { margin: 0 0 6px 18px; }
+  .ml-box pre { white-space: pre-wrap; font-family: inherit; font-size: 12px; background: var(--bg-section); padding: 10px; border-radius: 3px; max-height: 220px; overflow: auto; }
+  .ml-ok { color: var(--ok); }
+  .ml-progress { font-size: 13px; margin: 0 0 12px; min-height: 18px; }
   .fil-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .fil-pill { display: inline-flex; align-items: center; gap: 2px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 14px; padding: 4px 12px 4px 10px; font-size: 12px; color: var(--text); cursor: pointer; }
   .fil-pill:hover { border-color: var(--accent); }
@@ -211,6 +232,7 @@
     <button data-panel="panel-filamentos">Filamentos</button>
     <button data-panel="panel-gastos">Gastos</button>
     <button data-panel="panel-calculadora">Calculadora</button>
+    <button data-panel="panel-mercadolibre">Mercado Libre</button>
   </nav>
 
   <main>
@@ -811,6 +833,69 @@
       </div>
     </section>
 
+
+    <!-- ---- MERCADO LIBRE ---- -->
+    <section class="panel" id="panel-mercadolibre">
+      <div class="card" id="ml-migration-card" style="display:none">
+        <h2>Falta un paso en Supabase</h2>
+        <p>Para usar Mercado Libre, corré <strong>supabase/migracion_mercadolibre.sql</strong> en Supabase → SQL Editor → Run, y recargá esta página.</p>
+      </div>
+
+      <div class="card">
+        <h2>Cuenta de Mercado Libre</h2>
+        <div class="ml-status"><span class="ml-dot" id="ml-dot"></span><span id="ml-status-text">Revisando…</span></div>
+        <p class="muted" id="ml-status-help" style="font-size:12px;margin-bottom:12px;"></p>
+        <div class="ml-actions">
+          <button type="button" class="btn btn-small" id="ml-connect-btn">Conectar con Mercado Libre</button>
+          <button type="button" class="btn-secondary btn-small" id="ml-disconnect-btn" style="display:none">Desconectar</button>
+        </div>
+        <p class="error-msg" id="ml-status-error" style="margin-top:10px"></p>
+      </div>
+
+      <div class="card">
+        <h2>Precio y envío en Mercado Libre</h2>
+        <p class="muted" style="font-size:12px;margin-bottom:14px;">Todos los avisos van con <strong>envío gratis</strong>. El precio en ML se calcula solo desde el precio de la web: <em>precio web + recargo % + costo del envío</em>, redondeado hacia arriba. Si cambiás algo acá, tocá "Sincronizar todo" para aplicarlo a lo ya publicado.</p>
+        <form id="ml-config-form">
+          <div class="grid3">
+            <div><label for="ml-recargo">Recargo sobre la web (%)</label><input type="number" id="ml-recargo" min="0" max="100" step="0.5"></div>
+            <div><label for="ml-envio">Costo del envío gratis ($U)</label><input type="number" id="ml-envio" min="0" step="1"></div>
+            <div><label for="ml-redondeo">Redondear hacia arriba a</label>
+              <select id="ml-redondeo"><option value="1">Sin redondeo</option><option value="10">Múltiplos de $U 10</option><option value="50">Múltiplos de $U 50</option><option value="100">Múltiplos de $U 100</option></select></div>
+          </div>
+          <div class="ml-example" id="ml-example"></div>
+          <div class="grid3">
+            <div><label for="ml-tipo">Tipo de publicación</label>
+              <select id="ml-tipo"><option value="gold_special">Clásica</option><option value="gold_pro">Premium (cuotas sin interés)</option></select></div>
+            <div><label for="ml-stock">Stock por color/variante</label><input type="number" id="ml-stock" min="1" max="999" step="1"></div>
+            <div><label for="ml-dias">Días de fabricación (opcional)</label><input type="number" id="ml-dias" min="1" max="45" step="1" placeholder="Ej: 5"></div>
+          </div>
+          <div class="grid2">
+            <div><label for="ml-garantia">Garantía</label><input type="text" id="ml-garantia" maxlength="40" placeholder="30 días"></div>
+            <div class="inline-check" style="margin-top:24px"><input type="checkbox" id="ml-sync-auto"><label for="ml-sync-auto">Sincronizar sola cada hora (precio, stock y pausas)</label></div>
+          </div>
+          <p class="muted" style="font-size:12px;margin:-4px 0 14px;">Como imprimís a pedido, el stock es un número fijo por color. Los colores marcados "sin stock" en Filamentos quedan en 0, y los productos ocultos de la web se pausan en ML.</p>
+          <button type="submit" class="btn btn-small" id="ml-config-save">Guardar</button>
+          <span class="ok-msg" id="ml-config-msg" style="margin-left:12px"></span>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Productos</h2>
+        <div class="toolbar">
+          <input type="search" class="search-bar" id="ml-search" placeholder="Buscar producto…">
+          <button type="button" class="btn-secondary btn-small" id="ml-sync-all">Sincronizar todo ahora</button>
+        </div>
+        <p class="ml-progress" id="ml-progress"></p>
+        <p class="muted" id="ml-last-sync" style="font-size:12px;margin-bottom:12px;"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>Producto</th><th>Web</th><th>En ML</th><th>Estado en Mercado Libre</th><th></th></tr></thead>
+            <tbody id="ml-tbody"></tbody>
+          </table>
+          <p class="empty-msg" id="ml-empty" style="display:none">No hay productos cargados.</p>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -836,5 +921,6 @@
 <script src="js/products.js"></script>
 <script src="js/supabase-client.js"></script>
 <script src="js/admin.js"></script>
+<script src="js/admin-ml.js"></script>
 </body>
 </html>

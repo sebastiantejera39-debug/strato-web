@@ -13,6 +13,10 @@
   to = "/.netlify/functions/:splat"
   status = 200
 
+# Sincronización con Mercado Libre: una vez por hora (precio, stock, pausas).
+[functions."ml-sync-cron"]
+  schedule = "@hourly"
+
 # Páginas inexistentes: Netlify sirve 404.html (con código 404) por sí solo.
 # Antes había una regla "/*" -> /index.html con estado 404 que devolvía el Home
 # con rutas relativas rotas (sin estilos) en cualquier URL con subcarpeta.
