@@ -311,7 +311,7 @@
     if (pv.error) return '<div class="ml-box"><span class="ml-err">' + esc(pv.error) + "</span></div>";
     const avisos = pv.avisos_ml
       .map((a) =>
-        "<li><strong>" + esc(a.titulo) + "</strong> — " + money(a.precio_ml) +
+        "<li><strong>" + esc(a.titulo) + "</strong>" + (a.color ? " · " + esc(a.color) : "") + " — " + money(a.precio_ml) +
         ' <span class="muted">(web ' + money(a.precio_web) + ")</span>" +
         (a.activo ? "" : ' <span class="ml-badge paused">sin stock / oculto: no se publica</span>') +
         (a.variantes.length ? '<br><span class="muted">Variantes: ' + a.variantes.map((v) => esc(v.color) + (v.stock ? "" : " (sin stock)")).join(", ") + "</span>" : "") +
@@ -326,13 +326,18 @@
     const val = pv.validacion
       ? pv.validacion.ok
         ? '<p class="ml-ok"><strong>✓ Mercado Libre validó el aviso.</strong> Se puede publicar.</p>'
-        : '<p class="ml-err"><strong>Mercado Libre todavía no lo acepta:</strong> ' + esc(pv.validacion.mensaje) + "</p>"
+        : '<p class="ml-err"><strong>Mercado Libre todavía no lo acepta:</strong> ' + esc(pv.validacion.mensaje) + "</p>" +
+          (pv.validacion.detalle ? '<details style="margin:-4px 0 10px"><summary class="muted" style="cursor:pointer;font-size:12px">Ver respuesta completa de ML</summary><pre>' + esc(pv.validacion.detalle) + "</pre></details>" : "")
       : "";
     return (
       '<div class="ml-box">' + val +
       "<h4>Categoría</h4><p>" + esc(pv.categoria.ruta || pv.categoria.nombre) + ' <span class="muted">(' + esc(pv.categoria.id) +
       (pv.categoria.sugerida ? ", sugerida por ML — si no es la correcta, cambiala en Opciones" : "") + ")</span></p>" +
-      "<h4>Avisos que se crean</h4><ul>" + (avisos || "<li>Ninguno</li>") + "</ul>" +
+      "<h4>Avisos que se crean</h4>" +
+      (pv.por_color && pv.avisos_ml.length > 1
+        ? '<p class="muted" style="font-size:12px;margin-bottom:6px">Mercado Libre pide un aviso por color, pero los junta en <strong>una sola publicación</strong> con selector de color: el comprador ve una ficha y elige el color ahí.</p>'
+        : "") +
+      "<ul>" + (avisos || "<li>Ninguno</li>") + "</ul>" +
       faltan +
       (pv.avisos.length ? "<h4>Para revisar</h4><ul>" + pv.avisos.map((a) => "<li>" + esc(a) + "</li>").join("") + "</ul>" : "") +
       "<h4>Datos que se completan solos</h4><p class=\"muted\">" + pv.atributos.map((a) => esc(a.id) + (a.value_name ? ": " + esc(a.value_name) : "")).join(" · ") + "</p>" +
