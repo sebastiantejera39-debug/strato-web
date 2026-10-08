@@ -308,6 +308,18 @@ const DEFAULT_CONFIG = {
   sync_auto: true,
 };
 
+// ML exige "número + unidad" (días, meses o años). "30" → "30 días", "6 meses" queda igual.
+function normalizeWarranty(v) {
+  const t = String(v == null ? '' : v).trim().toLowerCase().replace(/\s+/g, ' ');
+  if (/^sin\b|^no\b|^ninguna$|^0$/.test(t)) return 'Sin garantía';
+  const m = /^(\d{1,3})\s*(d[ií]as?|mes(es)?|a[ñn]os?)?$/.exec(t);
+  if (!m) return '30 días';
+  const n = Number(m[1]) || 30;
+  const u = m[2] || 'días';
+  const unit = /^d/.test(u) ? (n === 1 ? 'día' : 'días') : /^m/.test(u) ? (n === 1 ? 'mes' : 'meses') : (n === 1 ? 'año' : 'años');
+  return n + ' ' + unit;
+}
+
 function normalizeConfig(row) {
   const c = Object.assign({}, DEFAULT_CONFIG, row || {});
   const num = (v, d, min, max) => {
@@ -321,7 +333,7 @@ function normalizeConfig(row) {
     tipo_publicacion: ['gold_special', 'gold_pro', 'free'].includes(c.tipo_publicacion) ? c.tipo_publicacion : 'gold_special',
     stock_por_variante: Math.round(num(c.stock_por_variante, 10, 1, 999)),
     dias_fabricacion: c.dias_fabricacion == null || c.dias_fabricacion === '' ? null : Math.round(num(c.dias_fabricacion, 0, 0, 45)) || null,
-    garantia: String(c.garantia || '').trim().slice(0, 40) || '30 días',
+    garantia: normalizeWarranty(c.garantia),
     sync_auto: c.sync_auto !== false,
   };
 }
@@ -540,10 +552,12 @@ function buildAttributes(ctx, p, sizeName, color) {
 }
 
 function saleTerms(cfg) {
-  const t = [
-    { id: 'WARRANTY_TYPE', value_name: 'Garantía del vendedor' },
-    { id: 'WARRANTY_TIME', value_name: cfg.garantia },
-  ];
+  const t = cfg.garantia === 'Sin garantía'
+    ? [{ id: 'WARRANTY_TYPE', value_name: 'Sin garantía' }]
+    : [
+        { id: 'WARRANTY_TYPE', value_name: 'Garantía del vendedor' },
+        { id: 'WARRANTY_TIME', value_name: cfg.garantia },
+      ];
   if (cfg.dias_fabricacion) t.push({ id: 'MANUFACTURING_TIME', value_name: cfg.dias_fabricacion + ' días' });
   return t;
 }
