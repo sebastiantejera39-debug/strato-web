@@ -208,7 +208,13 @@
       tipo_publicacion: $("ml-tipo").value,
       stock_por_variante: Math.min(999, Math.max(1, Math.round(n("ml-stock", 10)))),
       dias_fabricacion: $("ml-dias").value === "" ? null : Math.min(45, Math.max(1, Math.round(n("ml-dias", 1)))),
-      garantia: $("ml-garantia").value.trim() || "30 días",
+      garantia: (function (g) {
+        // ML pide número + unidad: "30" pasa a "30 días".
+        g = g.trim().toLowerCase();
+        if (/^sin\b|^no\b|^ninguna$|^0$/.test(g)) return "Sin garantía";
+        if (/^\d+$/.test(g)) return g + " días";
+        return /^\d+\s*(d[ií]as?|mes(es)?|a[ñn]os?)$/.test(g) ? g : "30 días";
+      })($("ml-garantia").value),
       sync_auto: $("ml-sync-auto").checked,
     };
   }
