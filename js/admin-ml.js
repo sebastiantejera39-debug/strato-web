@@ -58,9 +58,13 @@
   }
 
   /* ------------------------------------------------------------ precio */
-  function mlPrice(base) {
+  function shipFor(p) {
+    const own = p && p.ml_costo_envio != null && p.ml_costo_envio !== "" ? Number(p.ml_costo_envio) : NaN;
+    return Number.isFinite(own) && own >= 0 ? own : Number(cfg.costo_envio || 0);
+  }
+  function mlPrice(base, p) {
     if (!cfg) return null;
-    const raw = Math.round(Number(base) * (1 + Number(cfg.recargo_pct || 0) / 100) + Number(cfg.costo_envio || 0));
+    const raw = Math.round(Number(base) * (1 + Number(cfg.recargo_pct || 0) / 100) + shipFor(p));
     const r = Number(cfg.redondear_a) > 1 ? Number(cfg.redondear_a) : 1;
     return Math.ceil(raw / r) * r;
   }
@@ -184,6 +188,8 @@
   /* ------------------------------------------------------------ config */
   function fillConfig() {
     if (!cfg) return;
+    const lbl = document.querySelector('label[for="ml-envio"]');
+    if (lbl) lbl.textContent = "Costo del envío general ($U)";
     $("ml-recargo").value = cfg.recargo_pct;
     $("ml-envio").value = cfg.costo_envio;
     $("ml-redondeo").value = String(cfg.redondear_a);
@@ -292,7 +298,8 @@
           "<td>" + (img ? '<img class="thumb" src="' + esc(img) + '" alt="">' : '<div class="thumb"></div>') + "</td>" +
           "<td><strong>" + esc(p.nombre) + "</strong>" + (p.activo === false ? '<div class="muted" style="font-size:11px">Oculto en la web</div>' : "") + "</td>" +
           "<td>" + priceRange(p, (n) => n) + "</td>" +
-          "<td>" + (cfg ? priceRange(p, mlPrice) : "—") + "</td>" +
+          "<td>" + (cfg ? priceRange(p, (n) => mlPrice(n, p)) +
+            '<div class="muted" style="font-size:11px">envío ' + money(shipFor(p)) + (p.ml_costo_envio != null ? " (propio)" : " (general)") + "</div>" : "—") + "</td>" +
           "<td>" + renderPubs(p) + "</td>" +
           '<td><div class="ml-actions">' +
           '<button type="button" class="btn-secondary btn-small" data-ml="preview">Vista previa</button>' +
@@ -390,6 +397,8 @@
       '<div class="ml-box"><form data-ml-options="' + esc(p.id) + '">' +
       '<div class="grid2"><div><label>Categoría de ML (opcional)</label><input type="text" name="cat" placeholder="Vacío = la elige Mercado Libre (ej: MLU1234)" value="' + esc(p.ml_categoria_id || "") + '"></div>' +
       '<div><label>Atributos extra (uno por línea: ID = valor)</label><textarea name="attrs" rows="3" placeholder="MATERIAL = PLA&#10;SHAPE = Redondo">' + esc(attrsToText(p.ml_atributos)) + "</textarea></div></div>" +
+      '<div class="grid2"><div><label>Costo del envío gratis de este producto ($U)</label><input type="number" name="envio" min="0" step="1" placeholder="Vacío = el general (' + esc(money(cfg ? cfg.costo_envio : 0)) + ')" value="' + esc(p.ml_costo_envio != null ? p.ml_costo_envio : "") + '"></div>' +
+      '<div class="muted" style="font-size:12px;padding-top:22px">Lo ves en Mercado Libre → Publicaciones, columna Envíos ("Pagás $ …"). Se suma al precio de este producto en ML.</div></div>' +
       '<label>Descripción para Mercado Libre (opcional)</label>' +
       '<textarea name="desc" rows="6" placeholder="Vacío = se usa la descripción de la web, pasada a texto plano. Sin links, teléfonos ni redes: ML no los permite.">' + esc(p.descripcion_ml || "") + "</textarea>" +
       '<div class="ml-actions"><button type="submit" class="btn btn-small">Guardar opciones</button>' +
@@ -408,7 +417,15 @@
       msg.textContent = "La categoría tiene que ser algo como MLU1234 (o dejala vacía).";
       return;
     }
+    const envioTxt = form.envio.value.trim();
+    const envio = envioTxt === "" ? null : Math.round(Number(envioTxt));
+    if (envio !== null && (!Number.isFinite(envio) || envio < 0)) {
+      msg.className = "error-msg";
+      msg.textContent = "El costo del envío tiene que ser un número (o dejalo vacío para usar el general).";
+      return;
+    }
     const patch = {
+      ml_costo_envio: envio,
       ml_categoria_id: cat || null,
       ml_atributos: textToAttrs(form.attrs.value),
       descripcion_ml: form.desc.value.trim() || null,
@@ -422,8 +439,11 @@
     const p = productos.find((x) => x.id === id);
     if (p) Object.assign(p, patch);
     msg.className = "ok-msg";
-    msg.textContent = pubsOf(id).length
-      ? "Guardado. La descripción nueva se manda a ML en la próxima sincronización."
+    renderTable();
+    const m2 = document.querySelector('form[data-ml-options="' + id + '"] [data-msg]');
+    if (m2) { m2.className = "ok-msg"; }
+    (m2 || msg).textContent = pubsOf(id).length
+      ? "Guardado. Tocá Sincronizar para mandar el precio y la descripción nuevos a ML."
       : "Guardado. Probá la vista previa.";
   }
 
