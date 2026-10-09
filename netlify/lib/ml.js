@@ -343,9 +343,15 @@ async function getConfig() {
   return normalizeConfig(rows && rows[0]);
 }
 
+// Costo del envío gratis de un producto: el suyo (Opciones) o, si no tiene, el general.
+function shippingCost(p, cfg) {
+  const own = p && p.ml_costo_envio != null && p.ml_costo_envio !== '' ? Number(p.ml_costo_envio) : NaN;
+  return Number.isFinite(own) && own >= 0 ? own : cfg.costo_envio;
+}
+
 // Precio en ML = precio web + recargo % + costo del envío gratis, redondeado hacia arriba.
-function mlPrice(base, cfg) {
-  const raw = Math.round(Number(base) * (1 + cfg.recargo_pct / 100) + cfg.costo_envio);
+function mlPrice(base, cfg, p) {
+  const raw = Math.round(Number(base) * (1 + cfg.recargo_pct / 100) + shippingCost(p, cfg));
   const r = cfg.redondear_a > 1 ? cfg.redondear_a : 1;
   return Math.ceil(raw / r) * r;
 }
@@ -585,7 +591,7 @@ function planUnits(p, cfg, availability, porColor) {
       problems.push((s.name ? 'Tamaño "' + s.name + '": ' : '') + 'no tiene precio (los productos "a cotizar" no se pueden publicar).');
       return;
     }
-    const price = mlPrice(s.price, cfg);
+    const price = mlPrice(s.price, cfg, p);
     const colorRows = colors.map((c) => ({ color: c, available: colorAvailable(availability, c) }));
     if (porColor && colorRows.length) {
       colorRows.forEach((c) =>
