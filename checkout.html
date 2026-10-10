@@ -58,15 +58,15 @@
           <div class="form-grid">
             <div class="field">
               <label for="fName">Nombre y apellido</label>
-              <input type="text" id="fName" required>
+              <input type="text" id="fName" autocomplete="name" required>
             </div>
             <div class="field">
               <label for="fPhone">Contacto</label>
-              <input type="tel" id="fPhone" required>
+              <input type="tel" id="fPhone" autocomplete="tel" placeholder="Ej: 099 123 456" required>
             </div>
             <div class="field full">
               <label for="fEmail">Email (opcional)</label>
-              <input type="email" id="fEmail">
+              <input type="email" id="fEmail" autocomplete="email">
             </div>
           </div>
 
@@ -81,7 +81,7 @@
             </div>
             <div class="field" id="deptoField" style="display:none">
               <label for="fDepto">Departamento</label>
-              <select id="fDepto">
+              <select id="fDepto" autocomplete="address-level1">
                 <option>Montevideo</option>
                 <option>Artigas</option>
                 <option>Canelones</option>
@@ -105,7 +105,7 @@
             </div>
             <div class="field full" id="addressField" style="display:none">
               <label for="fAddress">Dirección completa</label>
-              <input type="text" id="fAddress" placeholder="Calle, número, ciudad, referencias">
+              <input type="text" id="fAddress" autocomplete="street-address" placeholder="Calle, número, ciudad, referencias">
             </div>
           </div>
 
