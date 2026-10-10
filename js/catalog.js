@@ -160,28 +160,249 @@ function stratoRenderCategoryNav() {
 }
 
 /* ---- Carrusel de categorías del home: lee STRATO_CATEGORIES (la lista
-   real, con foto de portada si el admin le cargó una) y arma una tira que
-   se desplaza sola en loop infinito. La lista se duplica una vez para que
-   el salto de "vuelta al principio" sea invisible (CSS anima -50% de un
-   track que mide el doble del ancho real). ---- */
+   real, con foto de portada si el admin le cargó una) y arma una tira dentro
+   de un contenedor con scroll horizontal NATIVO:
+   - celular: se desliza con el dedo;
+   - PC: se arrastra con el mouse apretado, con las flechas de los costados
+     o con el trackpad;
+   - además avanza solo, despacio, y se detiene con el mouse encima, al tocarlo
+     o arrastrarlo, con el foco del teclado, y no avanza solo si el sistema
+     pide "reducir movimiento" (sigue pudiéndose mover a mano).
+   La lista se repite varias veces (1 real, con links y foco; el resto son
+   copias decorativas, aria-hidden y sin foco) para que no tenga principio ni
+   fin: cuando la posición se aleja de la copia real, se la devuelve a ella
+   sin que se note (todas las copias son idénticas y miden lo mismo). ---- */
+let stratoCarouselStop = null;
 function stratoRenderCategoryCarousel() {
   const track = document.getElementById("categoryCarouselTrack");
   if (!track || !STRATO_CATEGORIES.length) return;
+  const scroller = track.parentElement;
+  const band = scroller.closest(".category-band") || scroller.parentElement;
+  if (stratoCarouselStop) stratoCarouselStop(); // si se vuelve a dibujar, se desarma lo anterior
 
-  const cardHtml = (c, i) => {
+  const n = STRATO_CATEGORIES.length;
+  const LEFT = 2; // copias a la izquierda de la real (margen para deslizar hacia atrás)
+  const SPEED = 45; // px por segundo del avance automático
+  const RESUME_TOUCH = 3000; // ms que espera para volver a avanzar solo después de tocarlo
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const ac = typeof AbortController === "function" ? new AbortController() : null;
+  const on = (el, type, fn, opts) => el.addEventListener(type, fn, ac ? Object.assign({ signal: ac.signal }, opts || {}) : opts);
+
+  const cardHtml = (c, i, real) => {
     const style = c.image ? ' style="background-image:url(&quot;' + c.image + '&quot;)"' : "";
     const cls = "category-card" + (c.image ? "" : " category-card--g" + (i % 5));
     return (
-      '<a class="' + cls + '" href="catalogo.html?cat=' + c.slug + '"' + style + ">" +
+      '<a class="' + cls + '" href="catalogo.html?cat=' + c.slug + '"' + style + ' draggable="false"' +
+      (real ? "" : ' aria-hidden="true" tabindex="-1"') + ">" +
       '<span class="category-card__label">' + c.name + (c.short ? "<span>" + c.short + "</span>" : "") + "</span>" +
       "</a>"
     );
   };
+  const setHtml = (real) => STRATO_CATEGORIES.map((c, i) => cardHtml(c, i, real)).join("");
+  const build = (rightCopies) => {
+    let html = "";
+    for (let k = 0; k < LEFT; k++) html += setHtml(false);
+    html += setHtml(true);
+    for (let k = 0; k < rightCopies; k++) html += setHtml(false);
+    track.innerHTML = html;
+  };
 
-  const cards = STRATO_CATEGORIES.map(cardHtml);
-  track.innerHTML = cards.join("") + cards.join(""); // duplicado para el loop
-  // Velocidad proporcional a la cantidad de categorías: parejo con 5 o con 15.
-  track.style.animationDuration = Math.max(STRATO_CATEGORIES.length * 4, 14) + "s";
+  scroller.setAttribute("role", "group");
+  scroller.setAttribute("aria-roledescription", "carrusel");
+  scroller.setAttribute("aria-label", "Categorías");
+
+  let S = 0; // ancho de UNA copia de la lista (tarjetas + espacios), medido
+  let V = 0; // ancho visible
+  let pos = 0; // posición "real" (decimal) del avance automático
+  let lastSet = 0; // última posición que puso el código (para distinguirla de la del usuario)
+  let rightCopies = 2;
+
+  const wrap = (v) => LEFT * S + ((((v - LEFT * S) % S) + S) % S);
+  const setScroll = (v) => {
+    lastSet = v;
+    scroller.scrollLeft = v;
+  };
+  const measure = () => {
+    V = scroller.clientWidth;
+    const a = track.children[0];
+    const b = track.children[n];
+    if (!a || !b) return false;
+    S = b.getBoundingClientRect().left - a.getBoundingClientRect().left;
+    return S > 0;
+  };
+  // Arma las copias necesarias (las de la derecha tienen que cubrir al menos un ancho de pantalla
+  // más margen) y coloca la tira en la copia real; `rel` (0–1) conserva el avance al redimensionar.
+  const setup = (rel) => {
+    rightCopies = 2;
+    build(rightCopies);
+    if (!measure()) return;
+    const need = Math.ceil(V / S) + 2;
+    if (need !== rightCopies) {
+      rightCopies = need;
+      build(rightCopies);
+      measure();
+    }
+    pos = LEFT * S + (rel || 0) * S;
+    setScroll(pos);
+  };
+
+  /* ---- Estado de pausa ---- */
+  let hovering = false;
+  let touching = false;
+  let dragging = false;
+  let focusInside = false;
+  let visible = true;
+  let resumeAt = 0;
+  let idleTimer = 0;
+  const holdFor = (ms) => {
+    resumeAt = Math.max(resumeAt, performance.now() + ms);
+  };
+
+  /* ---- Avance automático ---- */
+  let raf = 0;
+  let last = 0;
+  const tick = (t) => {
+    raf = requestAnimationFrame(tick);
+    const dt = Math.min(0.1, (t - last) / 1000);
+    last = t;
+    if (!S || reduceMotion.matches || !visible || document.hidden) return;
+    if (hovering || touching || dragging || focusInside || performance.now() < resumeAt) return;
+    pos = wrap(pos + SPEED * dt);
+    setScroll(pos);
+  };
+
+  /* ---- Lo que mueve el usuario (dedo, arrastre, flechas, trackpad, teclado) ---- */
+  on(scroller, "scroll", () => {
+    if (Math.abs(scroller.scrollLeft - lastSet) < 1.5) return; // lo movió el avance automático
+    pos = scroller.scrollLeft;
+    lastSet = pos;
+    holdFor(RESUME_TOUCH);
+    clearTimeout(idleTimer);
+    // Cuando termina de moverse, se lo devuelve a la copia real (sin que se note).
+    idleTimer = setTimeout(() => {
+      if (touching || dragging || !S) return;
+      const w = wrap(scroller.scrollLeft);
+      if (Math.abs(w - scroller.scrollLeft) > 0.5) setScroll(w);
+      pos = w;
+    }, 160);
+  }, { passive: true });
+
+  /* Mouse: arrastrar apretando. Dedo: deslizar nativo (solo se detiene el avance). */
+  let drag = null;
+  let suppressClick = false;
+  on(scroller, "pointerdown", (e) => {
+    suppressClick = false;
+    if (e.pointerType !== "mouse") {
+      touching = true;
+      return;
+    }
+    if (e.button !== 0) return;
+    drag = { id: e.pointerId, x: e.clientX, left: scroller.scrollLeft, moved: false };
+  });
+  on(scroller, "pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dx = e.clientX - drag.x;
+    if (!drag.moved) {
+      if (Math.abs(dx) < 6) return;
+      drag.moved = true;
+      dragging = true;
+      suppressClick = true; // lo que sigue al soltar es el final de un arrastre, no un clic en la tarjeta
+      scroller.classList.add("is-dragging");
+      try { scroller.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    scroller.scrollLeft = drag.left - dx;
+  });
+  const endPress = (e) => {
+    if (e.pointerType !== "mouse") {
+      touching = false;
+      holdFor(RESUME_TOUCH);
+    }
+    if (!drag) return;
+    if (drag.moved) {
+      dragging = false;
+      scroller.classList.remove("is-dragging");
+      try { scroller.releasePointerCapture(drag.id); } catch (_) {}
+      holdFor(1200);
+    }
+    drag = null;
+  };
+  on(scroller, "pointerup", endPress);
+  on(scroller, "pointercancel", endPress);
+  on(scroller, "click", (e) => {
+    if (suppressClick) {
+      e.preventDefault();
+      e.stopPropagation();
+      suppressClick = false;
+    }
+  }, true);
+  on(scroller, "keydown", () => { suppressClick = false; });
+  on(scroller, "dragstart", (e) => e.preventDefault());
+
+  /* Pausas: mouse encima (incluye las flechas) y foco del teclado. */
+  on(band, "pointerenter", (e) => { if (e.pointerType === "mouse") hovering = true; });
+  on(band, "pointerleave", (e) => {
+    if (e.pointerType === "mouse") {
+      hovering = false;
+      holdFor(500);
+    }
+  });
+  on(scroller, "focusin", () => { focusInside = true; });
+  on(scroller, "focusout", (e) => {
+    focusInside = !!(e.relatedTarget && scroller.contains(e.relatedTarget));
+    if (!focusInside) holdFor(1000);
+  });
+
+  /* Flechas (solo se ven con mouse; ver CSS): una tarjeta por clic. */
+  band.querySelectorAll(".category-band__nav").forEach((b) => b.remove());
+  const mkNav = (dir) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "category-band__nav category-band__nav--" + (dir < 0 ? "prev" : "next");
+    b.setAttribute("aria-label", dir < 0 ? "Categorías anteriores" : "Categorías siguientes");
+    b.textContent = dir < 0 ? "‹" : "›";
+    on(b, "click", () => {
+      if (!S) return;
+      holdFor(RESUME_TOUCH);
+      scroller.scrollBy({ left: dir * (S / n), behavior: reduceMotion.matches ? "auto" : "smooth" });
+    });
+    return b;
+  };
+  band.appendChild(mkNav(-1));
+  band.appendChild(mkNav(1));
+
+  /* Solo avanza mientras se ve en pantalla; si cambia el ancho, se rearma. */
+  let io = null;
+  if ("IntersectionObserver" in window) {
+    io = new IntersectionObserver((entries) => { visible = entries[entries.length - 1].isIntersecting; });
+    io.observe(scroller);
+  }
+  let ro = null;
+  let resizeTimer = 0;
+  if ("ResizeObserver" in window) {
+    ro = new ResizeObserver(() => {
+      if (scroller.clientWidth === V) return;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const rel = S ? (((scroller.scrollLeft - LEFT * S) % S) + S) % S / S : 0;
+        setup(rel);
+      }, 150);
+    });
+    ro.observe(scroller);
+  }
+
+  setup(0);
+  raf = requestAnimationFrame((t) => { last = t; raf = requestAnimationFrame(tick); });
+
+  stratoCarouselStop = () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(idleTimer);
+    clearTimeout(resizeTimer);
+    if (ac) ac.abort();
+    if (io) io.disconnect();
+    if (ro) ro.disconnect();
+    band.querySelectorAll(".category-band__nav").forEach((b) => b.remove());
+    stratoCarouselStop = null;
+  };
 }
 
 /* ---- Catálogo con filtro por categoría (multiselección: se puede elegir
@@ -341,7 +562,10 @@ function stratoOpenProduct(id) {
   lightbox.dataset.qty = "1";
   const qtyEl = document.getElementById("lbQty");
   if (qtyEl) qtyEl.value = "1";
-  lightbox.dataset.size = product.sizes && product.sizes.length ? product.sizes[0].name : "";
+  // La ficha abre con el tamaño MÁS BARATO elegido (el mismo precio que dice "Desde $U X" en la
+  // tarjeta), no con el primero de la lista: antes un producto cuya lista empieza por el más caro
+  // abría con ese precio ya elegido.
+  lightbox.dataset.size = product.sizes && product.sizes.length ? stratoCheapestSize(product.sizes).name : "";
   // Con tamaños o descuentos hay más cosas que mostrar: el cuadro se hace un poco más alto.
   lightbox.classList.toggle("lightbox--rich", !!(product.sizes && product.sizes.length) || stratoProductTiers(product).length > 0);
 
@@ -355,13 +579,29 @@ function stratoOpenProduct(id) {
   // foco; con Tab el primer salto va al botón de cerrar).
   const active = document.activeElement;
   stratoLastFocus = active && active !== document.body ? active : null;
+  const panel = lightbox.querySelector(".lightbox__panel");
+  // En celular el cuadro entero se desplaza como una hoja: sin esto, si la
+  // ficha anterior se había cerrado scrolleada hacia abajo, la siguiente se
+  // abría ya corrida (sin la foto ni el título a la vista).
+  if (panel) panel.scrollTop = 0;
   lightbox.classList.add("open");
   document.body.style.overflow = "hidden";
-  const panel = lightbox.querySelector(".lightbox__panel");
   if (panel) {
     panel.setAttribute("tabindex", "-1");
     panel.focus({ preventScroll: true });
   }
+}
+
+/* El tamaño más barato de la lista (si hay empate, el primero). */
+function stratoCheapestSize(sizes) {
+  return sizes.reduce((best, sz) => (sz.price < best.price ? sz : best), sizes[0]);
+}
+
+/* Rótulo de las opciones: "Pack" si todas son packs/combos/cantidades ("Pack x20",
+   "x10"…), "Tamaño" en cualquier otro caso. */
+function stratoSizesLabel(sizes) {
+  const isPack = (name) => /^\s*(pack|combo|set|x\s?\d+|\d+\s*(unidades|unidad|unid|un|u)\b)/i.test(name || "");
+  return sizes.length && sizes.every((sz) => isPack(sz.name)) ? "Pack" : "Tamaño";
 }
 
 /* ---- Tamaños: botones con el nombre y el precio de cada uno. ---- */
@@ -377,7 +617,7 @@ function stratoRenderLightboxSizes(product, lightbox) {
   wrap.style.display = "";
   const label = document.createElement("div");
   label.className = "lightbox__field-label";
-  label.textContent = "Tamaño";
+  label.textContent = stratoSizesLabel(sizes);
   wrap.appendChild(label);
 
   const row = document.createElement("div");
