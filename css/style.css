@@ -389,9 +389,13 @@ input, textarea, select { font-family: inherit; }
 .value-strip li::before { content: '◆'; font-size: 0.5rem; color: var(--color-charcoal); }
 
 /* ---------- Carrusel de categorías (home) ----------
-   La tira (track) se arma en JS a partir de STRATO_CATEGORIES, duplicada
-   una vez, y se desplaza sola con esta animación en loop infinito; se
-   pausa al pasar el mouse para poder leer/clickear con comodidad.
+   La tira (track) se arma en JS a partir de STRATO_CATEGORIES, repetida varias
+   veces (las copias extra son decorativas, aria-hidden), dentro de un contenedor
+   con scroll horizontal NATIVO: en celular se desliza con el dedo; en PC se
+   arrastra con el mouse apretado, con las flechas de los costados o con el
+   trackpad. Además avanza solo, despacio (ver stratoRenderCategoryCarousel en
+   js/catalog.js), y se detiene con el mouse encima, al tocarlo o arrastrarlo,
+   con el foco del teclado, y no avanza solo si el sistema pide "reducir movimiento".
    Las tarjetas ocupan TODO el alto de la sección (pegadas a la zona inicial de
    arriba y a "La selección" de abajo), a todo el ancho de la pantalla, con un
    espacio blanco entre una y otra (como si flotaran sobre el fondo de la página).
@@ -408,25 +412,49 @@ input, textarea, select { font-family: inherit; }
 .category-band__head .eyebrow::before { background: var(--color-accent); }
 .category-band__head h2 { color: var(--color-paper); margin: var(--space-xs) 0 0; text-shadow: 0 1px 14px rgba(36, 8, 5, 0.7), 0 0 3px rgba(36, 8, 5, 0.7), 0 0 1px rgba(36, 8, 5, 0.6); }
 .category-carousel {
-  overflow: hidden;
+  overflow-x: auto; overflow-y: hidden;
   height: clamp(420px, 34vw, 500px);
+  /* Sin barra de scroll visible (se desliza igual). */
+  scrollbar-width: none; -ms-overflow-style: none;
+  /* Que al deslizar la tira hasta el borde no se dispare el "atrás" del navegador. */
+  overscroll-behavior-x: contain;
+  /* La página tiene scroll suave: acá el avance automático tiene que ser inmediato. */
+  scroll-behavior: auto;
 }
+.category-carousel::-webkit-scrollbar { display: none; }
 .category-carousel__track {
   display: flex;
   gap: var(--space-sm);
-  /* El mismo espacio al final que entre tarjetas: así la mitad exacta de la tira
-     (lo que se desplaza) coincide con el largo de una vuelta y el loop no da saltito. */
+  /* El mismo espacio al final que entre tarjetas: así cada copia de la tira mide
+     exactamente lo mismo y el salto de "vuelta al principio" es invisible. */
   padding-right: var(--space-sm);
   width: max-content;
   height: 100%;
-  animation-name: category-scroll;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
 }
-.category-carousel:hover .category-carousel__track { animation-play-state: paused; }
-@keyframes category-scroll {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
+/* PC: se arrastra con el mouse apretado (el JS suma la clase mientras se arrastra). */
+@media (hover: hover) and (pointer: fine) {
+  .category-carousel { cursor: grab; }
+  .category-carousel.is-dragging { cursor: grabbing; }
+}
+.category-carousel.is-dragging { user-select: none; }
+.category-card { -webkit-user-drag: none; user-select: none; -webkit-touch-callout: none; }
+/* Flechas (solo con mouse; en celular se desliza con el dedo). Van sobre las fotos. */
+.category-band__nav {
+  position: absolute; top: 50%; z-index: 4;
+  width: 44px; height: 44px; margin-top: -22px; border-radius: 50%;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.92); color: var(--color-charcoal);
+  border: none; padding: 0 0 3px; font-size: 1.7rem; line-height: 1; cursor: pointer;
+  box-shadow: 0 2px 12px rgba(36, 8, 5, 0.3);
+  transition: background var(--transition), transform var(--dur-press) var(--ease-out);
+}
+.category-band__nav:hover { background: #fff; }
+.category-band__nav:active { transform: scale(.97); }
+.category-band__nav:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
+.category-band__nav--prev { left: var(--space-sm); }
+.category-band__nav--next { right: var(--space-sm); }
+@media (hover: hover) and (pointer: fine) {
+  .category-band__nav { display: flex; }
 }
 .category-card {
   position: relative;
@@ -1030,13 +1058,29 @@ input, textarea, select { font-family: inherit; }
   /* En una columna angosta no tiene sentido repartir un alto fijo entre
      foto e info (quedaría todo apretado) — la foto vuelve a su relación
      cuadrada natural arriba, y el panel entero se desplaza como una hoja,
-     igual que antes. La descripción se sigue recortando con su botón. */
+     igual que antes. La descripción se sigue recortando con su botón.
+
+     Acá el panel NO usa grilla: en Safari de iPhone la fila de la foto
+     (alto automático + aspect-ratio + overflow:hidden) se calculaba en ~0 y
+     la info subía por debajo de la foto — el título, la categoría y el
+     precio quedaban escondidos detrás de la imagen y la descripción se veía
+     encima. Con bloques normales (uno debajo del otro) y la foto cuadrada
+     armada con padding-top:100% (la técnica clásica, que funciona igual en
+     todos los navegadores) no hay nada que calcular distinto. */
   .lightbox__panel {
-    grid-template-columns: 1fr;
-    height: auto; max-height: 90vh;
+    display: block;
+    height: auto; max-height: 90vh; max-height: 90dvh;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
-  .lightbox__media { height: auto; aspect-ratio: 1/1; }
+  .lightbox__media {
+    position: relative; z-index: 0;
+    height: 0; padding-top: 100%;
+  }
+  .lightbox__media > .product-gallery {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  }
   .lightbox__info { height: auto; overflow: visible; }
   /* En celular el cuadro entero ya se desplaza como una hoja (arriba), así
      que acá la descripción vuelve a recortarse a un puñado de líneas fijas
@@ -1071,6 +1115,12 @@ input, textarea, select { font-family: inherit; }
   display: flex; align-items: center; justify-content: space-between;
   padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--color-line);
 }
+/* La ✕ de cerrar usa la clase .icon-btn del encabezado, que pinta en blanco
+   (el encabezado es bordó). Dentro del carrito el fondo es blanco: sin esto la
+   cruz quedaba blanca sobre blanco, invisible — y en celular, donde el carrito
+   ocupa toda la pantalla, es la única forma de salir. */
+.cart-drawer .icon-btn { color: var(--color-ink); }
+.cart-drawer__continue { margin-top: 0.6rem; }
 .cart-drawer__items { flex: 1; overflow-y: auto; padding: var(--space-sm) var(--space-md); }
 .cart-item { display: grid; grid-template-columns: 64px 1fr auto; gap: var(--space-sm); padding: var(--space-sm) 0; border-bottom: 1px solid var(--color-line); }
 .cart-item__thumb { width: 64px; height: 64px; border-radius: var(--radius); overflow: hidden; }
@@ -1147,7 +1197,8 @@ input, textarea, select { font-family: inherit; }
 }
 .field input, .field textarea, .field select {
   width: 100%; padding: 0.8em 0.9em; border: 1px solid var(--color-line);
-  background: var(--color-paper); border-radius: var(--radius); font-size: 0.92rem; color: var(--color-ink);
+  /* 16px: con menos, Safari de iPhone hace zoom a la página al tocar el campo. */
+  background: var(--color-paper); border-radius: var(--radius); font-size: 1rem; color: var(--color-ink);
 }
 .field input:focus, .field textarea:focus, .field select:focus {
   outline: none; border-color: var(--color-charcoal);
@@ -1282,6 +1333,10 @@ input, textarea, select { font-family: inherit; }
     min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; margin-top: 0;
   }
   .cart-item__note-input, .cart-cupon__input { min-height: 44px; }
+  /* Campos de 16px (o más) en pantallas táctiles: con menos, Safari de iPhone
+     hace zoom a la página al tocar el campo y después hay que volver a achicarla. */
+  .lightbox__qty-input, .cart-item__qty-input, .cart-item__note-input, .cart-cupon__input,
+  .lightbox__color-select { font-size: 16px; }
 }
 @media (max-width: 720px) {
   /* Los controles de 44px necesitan un poco más de ancho útil. */
@@ -1300,6 +1355,7 @@ input, textarea, select { font-family: inherit; }
   .lightbox__qty button:active,
   .cart-item__qty button:active,
   .payment-method__btn:active,
+  .category-band__nav:active,
   .icon-btn:active,
   .nav-toggle:active,
   .lightbox__close:active,
