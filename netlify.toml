@@ -13,6 +13,59 @@
   to = "/.netlify/functions/:splat"
   status = 200
 
+# Archivos internos del repositorio (código de las funciones, SQL de la base,
+# documentación, carpeta vieja del rebranding): como "publish" es "." Netlify
+# los servía como parte del sitio. Ahora responden 404 con la página 404.html.
+# No afecta a las funciones: siguen andando por /api/* y /.netlify/functions/.
+# Si se suma otro archivo interno a la raíz del repo, agregar su regla acá.
+[[redirects]]
+  from = "/netlify/*"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/supabase/*"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/_storge-rebrand-update/*"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/_storge-rebrand-update.zip"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/README.md"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/SETUP.md"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/MERCADOLIBRE.md"
+  to = "/404.html"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/netlify.toml"
+  to = "/404.html"
+  status = 404
+  force = true
+
 # Sincronización con Mercado Libre: una vez por hora (precio, stock, pausas).
 [functions."ml-sync-cron"]
   schedule = "@hourly"
