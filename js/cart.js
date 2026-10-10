@@ -380,7 +380,8 @@ function stratoRenderCartDrawer() {
       cuponHtml +
       rowsHtml +
       '<p class="muted" style="font-size:0.78rem;margin:0.75rem 0 1rem;">Los productos a cotizar se coordinan por WhatsApp. Envío no incluido.</p>' +
-      '<a href="checkout.html" class="btn btn-primary btn-block">Finalizar pedido</a>';
+      '<a href="checkout.html" class="btn btn-primary btn-block">Finalizar pedido</a>' +
+      '<button type="button" class="btn btn-ghost btn-block cart-drawer__continue" onclick="stratoCloseCart()">Seguir comprando</button>';
   }
 
   if (refocus) {
