@@ -25,6 +25,10 @@ const CURRENCY = 'UYU';
 const FETCH_TIMEOUT_MS = 6000;
 const MAX_PICTURES = 10;
 const MAX_UNITS = 30; // tope de avisos por producto (tamaños × colores)
+const DEFAULT_MAX_TITLE = 60;
+// Lo que se le pregunta a ML de cada aviso para saber cómo está hoy.
+const ITEM_FIELDS = 'id,status,sub_status,permalink,price,title,family_name,sold_quantity';
+const LOOSE_FIELDS = 'id,status,title,family_name,attributes,price,permalink,available_quantity,category_id,sold_quantity';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 class HttpError extends Error {
@@ -306,6 +310,8 @@ const DEFAULT_CONFIG = {
   dias_fabricacion: null,
   garantia: '30 días',
   sync_auto: true,
+  comision_pct: 14,
+  incluir_comision: false,
 };
 
 // ML exige "número + unidad" (días, meses o años). "30" → "30 días", "6 meses" queda igual.
@@ -335,6 +341,8 @@ function normalizeConfig(row) {
     dias_fabricacion: c.dias_fabricacion == null || c.dias_fabricacion === '' ? null : Math.round(num(c.dias_fabricacion, 0, 0, 45)) || null,
     garantia: normalizeWarranty(c.garantia),
     sync_auto: c.sync_auto !== false,
+    comision_pct: num(c.comision_pct, 14, 0, 60),
+    incluir_comision: c.incluir_comision === true,
   };
 }
 
@@ -349,11 +357,53 @@ function shippingCost(p, cfg) {
   return Number.isFinite(own) && own >= 0 ? own : cfg.costo_envio;
 }
 
-// Precio en ML = precio web + recargo % + costo del envío gratis, redondeado hacia arriba.
+// Costo fijo que Mercado Libre Uruguay cobra por unidad vendida en productos de menos de $U 1.000,
+// además de la comisión por venta (según su página "Conocé el cargo de tu producto").
+// En los límites exactos (500 y 750) se usa el tramo más caro, por las dudas.
+const FIXED_TIERS = [
+  { from: 0, to: 500, fee: 15 },
+  { from: 500, to: 750, fee: 25 },
+  { from: 750, to: 1000, fee: 40 },
+  { from: 1000, to: Infinity, fee: 0 },
+];
+
+function fixedFee(price) {
+  const t = FIXED_TIERS.find((x) => price >= x.from && price < x.to);
+  return t ? t.fee : 0;
+}
+
+// Comisión por venta (%) de un producto: la suya (Opciones) o, si no tiene, la general.
+function commissionPct(p, cfg) {
+  const own = p && p.ml_comision_pct != null && p.ml_comision_pct !== '' ? Number(p.ml_comision_pct) : NaN;
+  return Number.isFinite(own) && own >= 0 && own <= 60 ? own : cfg.comision_pct;
+}
+
+// Lo que queda en tu bolsillo con un precio dado: precio − comisión − costo fijo − envío gratis.
+function mlNet(price, cfg, p) {
+  const c = commissionPct(p, cfg) / 100;
+  return Math.round(price - price * c - fixedFee(price) - shippingCost(p, cfg));
+}
+
+// Precio en ML.
+//  - Con "incluir comisión" apagado (como era antes): precio web + recargo % + costo del envío.
+//  - Con "incluir comisión" prendido: el precio más bajo (redondeado hacia arriba) con el que, después de que ML
+//    cobre su comisión y el costo fijo y de pagar el envío gratis, te quedan precio web + recargo %.
 function mlPrice(base, cfg, p) {
-  const raw = Math.round(Number(base) * (1 + cfg.recargo_pct / 100) + shippingCost(p, cfg));
   const r = cfg.redondear_a > 1 ? cfg.redondear_a : 1;
-  return Math.ceil(raw / r) * r;
+  const env = shippingCost(p, cfg);
+  if (!cfg.incluir_comision) {
+    const raw = Math.round(Number(base) * (1 + cfg.recargo_pct / 100) + env);
+    return Math.ceil(raw / r) * r;
+  }
+  const up = (n) => Math.ceil(Number((n / r).toFixed(6))) * r;
+  const target = Number(base) * (1 + cfg.recargo_pct / 100);
+  const c = commissionPct(p, cfg) / 100;
+  for (const t of FIXED_TIERS) {
+    let price = up((target + env + t.fee) / (1 - c));
+    if (price < t.from) price = up(t.from); // el tramo empieza más arriba: ahí ya no cobra de menos
+    if (price < t.to) return price;
+  }
+  return up((target + env) / (1 - c));
 }
 
 function decodeEntities(s) {
@@ -622,6 +672,15 @@ function unitTitle(ctx, p, unit, mode) {
   return truncate(parts.join(' '), ctx.maxTitle);
 }
 
+// Compara dos títulos sin tomar en cuenta mayúsculas ni espacios de más
+// (así ML no "cambia" el nombre solo porque lo acomodó).
+function normTitle(s) {
+  return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function sameTitle(a, b) {
+  return normTitle(a) === normTitle(b);
+}
+
 function buildItemPayload(ctx, p, cfg, unit, mode) {
   const pics = pictures(p);
   const single = unit.colors.length === 1 ? unit.colors[0].color : null;
@@ -692,6 +751,10 @@ async function updatePub(id, patch) {
   await sb('ml_publicaciones?id=eq.' + id, { method: 'PATCH', prefer: 'return=minimal', body: patch });
 }
 
+async function deletePub(id) {
+  await sb('ml_publicaciones?id=eq.' + id, { method: 'DELETE', prefer: 'return=minimal' });
+}
+
 function descriptionFor(p, cfg, unit, ctxColorNote) {
   let d = buildDescription(p, cfg);
   if (ctxColorNote && unit.colors.length > 1) {
@@ -702,6 +765,25 @@ function descriptionFor(p, cfg, unit, ctxColorNote) {
     d += '\n\nSi querés combinar varios colores en la misma pieza, avisanos por mensaje después de comprar.';
   }
   return d;
+}
+
+// Lo que Mercado Libre cobra de verdad por vender a ese precio en esa categoría (API oficial listing_prices).
+// Devuelve {total, pct, fijo} o null si ML no contesta algo entendible.
+async function realFee(ml, categoryId, listingType, price) {
+  const r = await ml.get('/sites/' + SITE_ID + '/listing_prices?price=' + price + '&category_id=' + categoryId + '&listing_type_id=' + listingType);
+  if (!r.ok || !r.data) return null;
+  const list = Array.isArray(r.data) ? r.data : [r.data];
+  const d = list.find((x) => x && x.listing_type_id === listingType) || list[0];
+  const total = d ? Number(d.sale_fee_amount) : NaN;
+  if (!Number.isFinite(total)) return null;
+  const det = d.sale_fee_details || {};
+  let pct = Number(det.percentage_fee);
+  if (!Number.isFinite(pct) || pct <= 0) pct = ((total - fixedFee(price)) / price) * 100;
+  return {
+    total: Math.round(total),
+    pct: Math.round(pct * 10) / 10,
+    fijo: Math.max(0, Math.round(total - (price * pct) / 100)),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -754,8 +836,28 @@ async function preview(productId) {
         '. Para el envío gratis automático hay que activarlo en Mercado Libre → Configuración → Envíos.');
     }
   }
+  // ¿La comisión configurada alcanza? Se compara con lo que ML cobra de verdad (si contesta).
+  let comision = null;
+  if (items[0]) {
+    const u = items[0].unit;
+    comision = {
+      incluida: cfg.incluir_comision,
+      configurada_pct: commissionPct(p, cfg),
+      propia: p.ml_comision_pct != null && p.ml_comision_pct !== '',
+      precio_ml: u.price,
+      objetivo: Math.round(u.basePrice * (1 + cfg.recargo_pct / 100)),
+      envio: shippingCost(p, cfg),
+      neto_modelo: mlNet(u.price, cfg, p),
+      real: null,
+    };
+    const rf = await realFee(ml, ctx.categoryId, cfg.tipo_publicacion, u.price);
+    if (rf) {
+      comision.real = Object.assign({ neto: Math.round(u.price - rf.total - comision.envio) }, rf);
+    }
+  }
   const missing = items[0] ? items[0].built.missing : [];
   return {
+    comision,
     categoria: { id: ctx.categoryId, nombre: ctx.categoryName, ruta: ctx.path, sugerida: ctx.predicted },
     modo: mode,
     por_color: porColor,
@@ -765,6 +867,7 @@ async function preview(productId) {
       color: it.unit.color,
       precio_web: it.unit.basePrice,
       precio_ml: it.unit.price,
+      neto: mlNet(it.unit.price, cfg, p),
       activo: it.unit.active,
       variantes: (it.built.payload.variations || []).map((v) => ({
         color: v.attribute_combinations[0].value_name,
@@ -781,6 +884,63 @@ async function preview(productId) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Avisos que creaste o moviste a mano en Mercado Libre                 */
+/* ------------------------------------------------------------------ */
+//
+// Si un aviso de la web quedó finalizado (o falta) y en ML hay uno suelto con el mismo nombre
+// y el mismo color, se vincula ese en vez de dejar un error o publicar un duplicado.
+
+function normName(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// Avisos activos o pausados de tu cuenta que la web todavía no tiene vinculados.
+async function loadLooseItems(ml, account) {
+  const rows = await sb('ml_publicaciones?select=ml_item_id&ml_item_id=not.is.null');
+  const linked = new Set((rows || []).map((x) => x.ml_item_id));
+  const ids = [];
+  for (const status of ['active', 'paused']) {
+    for (let offset = 0; offset < 300; offset += 100) {
+      const r = await ml.get('/users/' + account.ml_user_id + '/items/search?status=' + status + '&limit=100&offset=' + offset);
+      if (!r.ok || !r.data || !Array.isArray(r.data.results)) break;
+      r.data.results.forEach((id) => { if (!linked.has(id) && !ids.includes(id)) ids.push(id); });
+      if (offset + 100 >= (Number(r.data.paging && r.data.paging.total) || 0)) break;
+    }
+  }
+  const out = [];
+  for (let i = 0; i < ids.length; i += 20) {
+    const r = await ml.get('/items?ids=' + ids.slice(i, i + 20).join(',') + '&attributes=' + LOOSE_FIELDS);
+    if (!r.ok || !Array.isArray(r.data)) continue;
+    r.data.forEach((row) => {
+      const b = row && row.code === 200 && row.body;
+      if (!b || !b.id) return;
+      const col = (Array.isArray(b.attributes) ? b.attributes : []).find((a) => a && a.id === 'COLOR');
+      out.push({
+        id: b.id, status: b.status, title: b.title, family_name: b.family_name, color: col ? col.value_name : '',
+        price: b.price, permalink: b.permalink || null, stock: b.available_quantity, category_id: b.category_id || null,
+        sold: Number(b.sold_quantity) || 0,
+      });
+    });
+  }
+  return out;
+}
+
+// De los avisos sueltos, cuáles son este producto (mismo nombre) y cuáles además tienen el mismo color.
+function matchLoose(loose, p, unit, mode) {
+  const color = normName(unit.color);
+  // El nombre puede estar cortado según el límite de la categoría (60, 120...): se prueban los tres largos.
+  const wants = Array.from(new Set([60, 120, 255].map((n) => normName(unitTitle({ maxTitle: n }, p, unit, mode)))));
+  const sameName = loose.filter((it) => {
+    // Con family_name tiene que ser igual (así "Bandeja Ondas" no se confunde con "Bandeja Ondas Grande");
+    // sin él se mira el título, que ML arma como nombre + color.
+    const n = normName(it.family_name || it.title);
+    return wants.some((w) => n === w || (!it.family_name && color && n === w + ' ' + color));
+  });
+  const exact = sameName.filter((it) => color && normName(it.color) === color);
+  return { exact, near: sameName.filter((it) => !exact.includes(it)) };
+}
+
+/* ------------------------------------------------------------------ */
 /* Publicar / sincronizar un producto (idempotente)                     */
 /* ------------------------------------------------------------------ */
 //
@@ -792,13 +952,17 @@ async function preview(productId) {
 async function reconcile(productId, opts) {
   opts = opts || {};
   const deadline = opts.deadline || Date.now() + 7000;
-  const result = { producto_id: productId, creados: 0, actualizados: 0, pausados: 0, sin_cambios: 0, errores: [], avisos: [], pendiente: false };
+  const result = {
+    producto_id: productId, creados: 0, actualizados: 0, pausados: 0, limpiados: 0, renombrados: 0, vinculados: 0,
+    sin_cambios: 0, finalizados: 0, errores: [], avisos: [], pendiente: false,
+    _renVentas: 0, _renErrores: [],
+  };
 
   const [p, cfg, availability, pubs, access] = await Promise.all([
     loadProduct(productId), getConfig(), loadColorAvailability(), loadPubs(productId), getAccess(),
   ]);
   const ml = makeMl(access);
-  if (!opts.create && pubs.length === 0) return Object.assign(result, { sin_publicar: true });
+  if (!opts.create && pubs.length === 0) { result.sin_publicar = true; return dropInternal(result); }
 
   let ctx = null;
   const getCtx = async () => (ctx = ctx || (await loadCategoryContext(ml, p)));
@@ -819,15 +983,68 @@ async function reconcile(productId, opts) {
   const byKey = new Map(pubs.map((x) => [key(x.tamano, x.color), x]));
   const wanted = new Set(units.map((u) => key(u.tamano, u.color)));
 
+  // 1) Cómo está hoy cada aviso en Mercado Libre (por si lo pausaste, cerraste o borraste desde ahí).
+  const remote = await fetchRemote(ml, pubs);
+  await applyRemote(pubs, remote);
+
+  // 2) Avisos finalizados o borrados en ML cuyo color/tamaño ya no está en la web: no hay nada
+  //    que hacer con ellos, así que se sacan de la lista (antes quedaban como error para siempre).
+  for (const pub of pubs.slice()) {
+    if (pub.estado !== 'closed' || !pub.ml_item_id || wanted.has(key(pub.tamano, pub.color))) continue;
+    await deletePub(pub.id);
+    byKey.delete(key(pub.tamano, pub.color));
+    pubs.splice(pubs.indexOf(pub), 1);
+    result.limpiados++;
+  }
+
+  // Avisos sueltos de la cuenta (se piden una sola vez, y solo si hace falta).
+  let looseCache = null;
+  const nearNotes = new Set();
+  const adoptFor = async (unit) => {
+    if (!unit.color) return null; // solo avisos por color (los de variantes no se pueden emparejar así)
+    try {
+      looseCache = looseCache || (await loadLooseItems(ml, access.account));
+    } catch (e) {
+      if (e && (e.code === 'RECONNECT' || e.code === 'NOT_CONNECTED')) throw e;
+      return null;
+    }
+    const m = matchLoose(looseCache, p, unit, mode);
+    const label = ((unit.tamano ? unit.tamano + ' ' : '') + unit.color).trim();
+    if (m.exact.length > 1) {
+      result.avisos.push('Hay ' + m.exact.length + ' avisos en Mercado Libre que parecen ser "' + label + '" (' + m.exact.map((x) => x.id).join(', ') + '): no sé cuál vincular. Finalizá los que sobran en ML.');
+      return null;
+    }
+    if (!m.exact.length) {
+      m.near.forEach((it) => nearNotes.add(it.id + (it.color ? ' (color "' + it.color + '")' : '')));
+      return null;
+    }
+    const it = m.exact[0];
+    const saved = await savePub({
+      producto_id: p.id, tamano: unit.tamano, color: unit.color, ml_item_id: it.id, permalink: it.permalink, modo: mode,
+      categoria_id: it.category_id, precio: it.price, stock: it.stock != null ? it.stock : null, estado: it.status, variaciones: [],
+      desc_hash: null, ultima_sync: new Date().toISOString(), ultimo_error: null,
+    });
+    looseCache = looseCache.filter((x) => x.id !== it.id);
+    result.vinculados++;
+    result.avisos.push('Se vinculó el aviso ' + it.id + ' ("' + label + '") que ya estaba en Mercado Libre.');
+    return { pub: saved, remote: { status: it.status, permalink: it.permalink, title: it.title, family_name: it.family_name, sold: it.sold, gone: false } };
+  };
+
   for (const unit of units) {
     if (Date.now() > deadline) { result.pendiente = true; break; }
-    const pub = byKey.get(key(unit.tamano, unit.color));
+    let pub = byKey.get(key(unit.tamano, unit.color));
+    let rm = pub && pub.ml_item_id ? remote.get(pub.ml_item_id) : undefined;
     try {
+      if (unit.active && (!pub || !pub.ml_item_id || pub.estado === 'closed')) {
+        const adopted = await adoptFor(unit);
+        if (adopted) { pub = adopted.pub; rm = adopted.remote; byKey.set(key(unit.tamano, unit.color), pub); }
+      }
       if (!pub || !pub.ml_item_id) {
         if (!unit.active) continue; // no se crea un aviso de algo sin stock o dado de baja
         await createUnit(ml, await getCtx(), p, cfg, unit, mode, result, (m) => { mode = m; });
       } else {
-        await updateUnit(ml, p, cfg, unit, pub, result, opts.force, !!(ctx ? !ctx.colorAsVariation : false));
+        await updateUnit(ml, p, cfg, unit, pub, result, opts.force, !!(ctx ? !ctx.colorAsVariation : false),
+          { remote: rm, mode, getCtx });
       }
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
@@ -837,22 +1054,101 @@ async function reconcile(productId, opts) {
     }
   }
 
-  // Avisos que ya no corresponden (tamaño o color borrado en la web): se pausan.
+  // 3) Avisos que ya no corresponden (tamaño o color sacado de la web): se pausan.
+  //    Quedan "retirados" (el panel los muestra aparte, sin error); "Limpiar" los finaliza.
   if (!result.pendiente) {
     for (const pub of pubs) {
       if (wanted.has(key(pub.tamano, pub.color)) || !pub.ml_item_id) continue;
+      if (pub.estado === 'closed') continue;
+      if (pub.estado === 'paused') {
+        // El cartel rojo que dejaba la versión anterior ya no corresponde.
+        if (pub.ultimo_error) await updatePub(pub.id, { ultimo_error: null });
+        continue;
+      }
+      if (pub.estado && pub.estado !== 'active') continue; // en revisión / inactivo: no se toca
       if (Date.now() > deadline) { result.pendiente = true; break; }
-      if (pub.estado === 'paused' || pub.estado === 'closed') continue;
       const r = await ml.put('/items/' + pub.ml_item_id, { status: 'paused' });
       await updatePub(pub.id, {
         estado: r.ok ? 'paused' : pub.estado,
-        ultimo_error: r.ok ? 'Ese tamaño/color ya no está en la web: se pausó el aviso.' : 'No se pudo pausar: ' + mlErrorMessage(r.data),
+        ultimo_error: r.ok ? null : 'No se pudo pausar: ' + mlErrorMessage(r.data),
         ultima_sync: new Date().toISOString(),
       });
       if (r.ok) result.pausados++;
     }
   }
+
+  if (nearNotes.size) {
+    result.avisos.push('En Mercado Libre hay avisos con el nombre de este producto que no están vinculados a la web: ' + Array.from(nearNotes).join(', ') +
+      '. Si alguno es el que falta, el color tiene que llamarse igual en la web y en ML.');
+  }
+
+  // Avisos sobre el cambio de nombre (se juntan para no repetir uno por color).
+  if (result._renVentas) {
+    result.avisos.push('El nombre nuevo no se aplicó en ' + result._renVentas + ' aviso' + (result._renVentas > 1 ? 's' : '') +
+      ': Mercado Libre no deja cambiar el título de un aviso que ya tiene ventas.');
+  }
+  Array.from(new Set(result._renErrores)).forEach((m) => result.avisos.push('Mercado Libre no aceptó el nombre nuevo: ' + m));
+  return dropInternal(result);
+}
+
+function dropInternal(result) {
+  delete result._renVentas;
+  delete result._renErrores;
   return result;
+}
+
+// Pregunta a ML cómo está hoy cada aviso. Devuelve Map ml_item_id → datos.
+//   gone:true = el aviso está finalizado o ya no existe (cerrado o borrado desde ML).
+// Si ML no contesta bien por un aviso, ese aviso no aparece en el mapa: nunca se da
+// nada por borrado sin estar seguros.
+async function fetchRemote(ml, pubs) {
+  const out = new Map();
+  const list = pubs.filter((x) => x.ml_item_id);
+  for (let i = 0; i < list.length; i += 20) {
+    const chunk = list.slice(i, i + 20);
+    const r = await ml.get('/items?ids=' + chunk.map((x) => x.ml_item_id).join(',') + '&attributes=' + ITEM_FIELDS);
+    if (!r.ok || !Array.isArray(r.data)) continue;
+    const byId = new Map();
+    r.data.forEach((row) => { if (row && row.body && row.body.id) byId.set(row.body.id, row); });
+    for (let j = 0; j < chunk.length; j++) {
+      const id = chunk[j].ml_item_id;
+      const row = byId.get(id) || r.data[j];
+      const body = row && row.body;
+      if (row && row.code === 200 && body && body.id === id) {
+        out.set(id, {
+          status: body.status,
+          permalink: body.permalink || null,
+          title: body.title,
+          family_name: body.family_name,
+          sold: Number(body.sold_quantity) || 0,
+          gone: body.status === 'closed',
+        });
+      } else if (row && row.code === 404) {
+        // Una segunda consulta, suelta, confirma que de verdad no existe.
+        const c = await ml.get('/items/' + id + '?attributes=id,status');
+        if (c.status === 404) out.set(id, { status: 'closed', permalink: null, gone: true, missing: true });
+      }
+    }
+  }
+  return out;
+}
+
+// Guarda en la base el estado real de cada aviso (y lo deja actualizado en memoria).
+async function applyRemote(pubs, remote) {
+  let n = 0;
+  for (const pub of pubs) {
+    const rm = pub.ml_item_id && remote.get(pub.ml_item_id);
+    if (!rm) continue;
+    const patch = {};
+    if (rm.status && pub.estado !== rm.status) patch.estado = rm.status;
+    if (rm.permalink && pub.permalink !== rm.permalink) patch.permalink = rm.permalink;
+    if (Object.keys(patch).length) {
+      await updatePub(pub.id, patch);
+      Object.assign(pub, patch);
+      n++;
+    }
+  }
+  return n;
 }
 
 async function createUnit(ml, ctx, p, cfg, unit, mode, result, setMode) {
@@ -904,10 +1200,47 @@ async function createUnit(ml, ctx, p, cfg, unit, mode, result, setMode) {
   result.creados++;
 }
 
-async function updateUnit(ml, p, cfg, unit, pub, result, force, colorNote) {
+// Si el nombre del producto cambió en la web, se lo manda a ML. ML solo lo permite en avisos
+// sin ventas; en los demás deja el nombre como estaba y se avisa. Devuelve true si lo cambió.
+async function renameIfNeeded(ml, p, unit, pub, result, extra) {
+  const rm = extra.remote;
+  if (!rm || rm.gone) return false;
+  const mode = pub.modo || extra.mode;
+  // En el modelo nuevo el nombre es el "family_name". Si ML no lo devuelve, se mira el título
+  // del aviso (que ML arma a partir del family_name, a veces con el color al final).
+  const useFamily = mode === 'user_products' && rm.family_name != null && String(rm.family_name).trim() !== '';
+  const live = useFamily ? rm.family_name : rm.title;
+  if (live == null || String(live).trim() === '') return false; // ML no devolvió el nombre: no adivinamos
+  const matches = (want) =>
+    sameTitle(live, want) || (mode === 'user_products' && !useFamily && normTitle(live).indexOf(normTitle(want)) === 0);
+  if (matches(unitTitle({ maxTitle: DEFAULT_MAX_TITLE }, p, unit, mode))) return false;
+
+  // Quizás la categoría permite títulos más largos que 60: se compara con su límite real.
+  let ctx;
+  try { ctx = await extra.getCtx(); } catch (e) {
+    if (e && (e.code === 'RECONNECT' || e.code === 'NOT_CONNECTED')) throw e;
+    return false;
+  }
+  const want = unitTitle(ctx, p, unit, mode);
+  if (matches(want)) return false;
+
+  if (rm.sold > 0) { result._renVentas++; return false; }
+  const r = await ml.put('/items/' + pub.ml_item_id, mode === 'user_products' ? { family_name: want } : { title: want });
+  if (!r.ok) { result._renErrores.push(mlErrorMessage(r.data)); return false; }
+  result.renombrados++;
+  return true;
+}
+
+async function updateUnit(ml, p, cfg, unit, pub, result, force, colorNote, extra) {
+  extra = extra || {};
   if (pub.estado === 'closed') {
-    await updatePub(pub.id, { ultimo_error: 'El aviso está finalizado en Mercado Libre. Tocá "Desvincular" y publicalo de nuevo.', ultima_sync: new Date().toISOString() });
-    result.errores.push((pub.ml_item_id) + ': finalizado en Mercado Libre.');
+    // Finalizado o borrado desde Mercado Libre: no se puede reactivar. No es un error:
+    // el panel lo muestra con "Publicar de nuevo". No se vuelve a crear solo, para no
+    // pisar lo que hiciste en ML (puede que lo hayas cerrado a propósito).
+    await updatePub(pub.id, { ultimo_error: null, ultima_sync: new Date().toISOString() });
+    result.finalizados++;
+    result.avisos.push(((unit.tamano ? unit.tamano + ' ' : '') + (unit.color || '')).trim() +
+      ' (' + pub.ml_item_id + '): está finalizado en Mercado Libre. Si lo querés de nuevo, tocá "Publicar de nuevo"; si no, sacá ese color/tamaño de la web.');
     return;
   }
   const stockFor = (c) => (c.available ? cfg.stock_por_variante : 0);
@@ -969,6 +1302,9 @@ async function updateUnit(ml, p, cfg, unit, pub, result, force, colorNote) {
     if (desiredStatus === 'paused') result.pausados++;
   }
 
+  // Nombre: si cambió en la web, se manda a ML.
+  if (await renameIfNeeded(ml, p, unit, pub, result, extra)) changed = true;
+
   // Descripción, si cambió en la web.
   const descText = descriptionFor(p, cfg, unit, colorNote || (!oldVars.length && !unit.color && unit.colors.length > 1));
   const h = hash(descText);
@@ -985,26 +1321,58 @@ async function updateUnit(ml, p, cfg, unit, pub, result, force, colorNote) {
   else result.sin_cambios++;
 }
 
-// Trae el estado real de cada aviso desde ML (por si lo pausaste o te lo
+// Trae el estado real de cada aviso desde ML (por si lo pausaste, cerraste o te lo
 // moderaron desde Mercado Libre) y lo guarda.
 async function refreshStatuses(productId) {
   const pubs = (await loadPubs(productId)).filter((x) => x.ml_item_id);
   if (!pubs.length) return 0;
   const ml = makeMl(await getAccess());
-  const ids = pubs.map((x) => x.ml_item_id).slice(0, 20).join(',');
-  const r = await ml.get('/items?ids=' + ids + '&attributes=id,status,permalink,price');
-  if (!r.ok || !Array.isArray(r.data)) return 0;
-  let n = 0;
-  for (const row of r.data) {
-    const body = row && row.body;
-    if (!body || !body.id) continue;
-    const pub = pubs.find((x) => x.ml_item_id === body.id);
-    if (pub && (pub.estado !== body.status || (body.permalink && pub.permalink !== body.permalink))) {
-      await updatePub(pub.id, { estado: body.status, permalink: body.permalink || pub.permalink });
-      n++;
+  return applyRemote(pubs, await fetchRemote(ml, pubs));
+}
+
+// Finaliza en ML los avisos "retirados" (color o tamaño que ya no está en la web) y los saca
+// de la lista. Finalizar es definitivo en ML, por eso solo lo hace el botón "Limpiar".
+async function cleanRetired(productId, opts) {
+  opts = opts || {};
+  const deadline = opts.deadline || Date.now() + 7000;
+  const result = { producto_id: productId, finalizados: 0, quitados: 0, errores: [], pendiente: false };
+  const [p, cfg, availability, pubs] = await Promise.all([loadProduct(productId), getConfig(), loadColorAvailability(), loadPubs(productId)]);
+  if (!pubs.length) return result;
+
+  const { units } = planUnits(p, cfg, availability, pubs.some((x) => x.color));
+  if (!units.length) {
+    throw new HttpError(409, 'Este producto no tiene ningún tamaño con precio, así que no se limpia nada (para no finalizar avisos por error).', 'NOTHING_WANTED');
+  }
+  const wanted = new Set(units.map((u) => u.tamano + '\u0000' + u.color));
+  const retired = pubs.filter((x) => !wanted.has(x.tamano + '\u0000' + x.color));
+  if (!retired.length) return result;
+
+  const ml = makeMl(await getAccess());
+  for (const pub of retired) {
+    if (Date.now() > deadline) { result.pendiente = true; break; }
+    try {
+      if (pub.ml_item_id && pub.estado !== 'closed') {
+        const r = await ml.put('/items/' + pub.ml_item_id, { status: 'closed' });
+        if (!r.ok) {
+          // Quizás ya estaba finalizado o borrado: en ese caso igual se saca de la lista.
+          const chk = await ml.get('/items/' + pub.ml_item_id + '?attributes=id,status');
+          const gone = chk.status === 404 || (chk.ok && chk.data && chk.data.status === 'closed');
+          if (!gone) {
+            result.errores.push([pub.tamano, pub.color].filter(Boolean).join(' ') + ' (' + pub.ml_item_id + '): ' + mlErrorMessage(r.data));
+            continue;
+          }
+        } else {
+          result.finalizados++;
+        }
+      }
+      await deletePub(pub.id);
+      result.quitados++;
+    } catch (e) {
+      if (e && (e.code === 'RECONNECT' || e.code === 'NOT_CONNECTED')) throw e;
+      result.errores.push((e && e.message) || String(e));
     }
   }
-  return n;
+  return result;
 }
 
 module.exports = {
@@ -1027,6 +1395,9 @@ module.exports = {
   getConfig,
   normalizeConfig,
   mlPrice,
+  mlNet,
+  fixedFee,
+  commissionPct,
   htmlToPlain,
   buildDescription,
   contactWarnings,
@@ -1036,6 +1407,8 @@ module.exports = {
   preview,
   reconcile,
   refreshStatuses,
+  cleanRetired,
+  fetchRemote,
   mlErrorMessage,
   UUID_RE,
 };
