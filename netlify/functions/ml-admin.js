@@ -10,6 +10,8 @@
 //   publish       → { producto_id } publica lo que falte y sincroniza lo que ya está
 //   sync          → { producto_id, force? } actualiza precio/stock/estado/descr.
 //   refresh       → { producto_id } trae el estado real de los avisos desde ML
+//   clean         → { producto_id } finaliza en ML los avisos "retirados" (color/tamaño que
+//                   ya no está en la web) y los saca de la lista
 //   unlink        → { publicacion_id } desvincula un aviso (no lo borra de ML)
 
 'use strict';
@@ -84,6 +86,9 @@ exports.handler = async (event) => {
 
       case 'refresh':
         return ml.reply(200, { actualizados: await ml.refreshStatuses(body.producto_id) });
+
+      case 'clean':
+        return ml.reply(200, await ml.cleanRetired(body.producto_id));
 
       case 'unlink': {
         if (!ml.UUID_RE.test(String(body.publicacion_id || ''))) throw new ml.HttpError(400, 'Publicación inválida.');
