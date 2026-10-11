@@ -62,11 +62,47 @@
     const own = p && p.ml_costo_envio != null && p.ml_costo_envio !== "" ? Number(p.ml_costo_envio) : NaN;
     return Number.isFinite(own) && own >= 0 ? own : Number(cfg.costo_envio || 0);
   }
+  // Costo fijo por unidad vendida de ML Uruguay en productos de menos de $U 1.000 (igual que el servidor).
+  const FIXED_TIERS = [
+    { from: 0, to: 500, fee: 15 },
+    { from: 500, to: 750, fee: 25 },
+    { from: 750, to: 1000, fee: 40 },
+    { from: 1000, to: Infinity, fee: 0 },
+  ];
+  function fixedFee(price) {
+    const t = FIXED_TIERS.find((x) => price >= x.from && price < x.to);
+    return t ? t.fee : 0;
+  }
+  const hasCommissionCols = () => !!cfg && "incluir_comision" in cfg && "comision_pct" in cfg;
+  function commissionFor(p) {
+    const own = p && p.ml_comision_pct != null && p.ml_comision_pct !== "" ? Number(p.ml_comision_pct) : NaN;
+    if (Number.isFinite(own) && own >= 0 && own <= 60) return own;
+    const g = cfg && cfg.comision_pct != null ? Number(cfg.comision_pct) : 14;
+    return Number.isFinite(g) && g >= 0 && g <= 60 ? g : 14;
+  }
+  // Lo que te queda con un precio dado: precio − comisión − costo fijo − envío gratis.
+  function mlNet(price, p) {
+    return Math.round(price - (price * commissionFor(p)) / 100 - fixedFee(price) - shipFor(p));
+  }
+  // Mismo cálculo que mlPrice() del servidor (netlify/lib/ml.js).
   function mlPrice(base, p) {
     if (!cfg) return null;
-    const raw = Math.round(Number(base) * (1 + Number(cfg.recargo_pct || 0) / 100) + shipFor(p));
     const r = Number(cfg.redondear_a) > 1 ? Number(cfg.redondear_a) : 1;
-    return Math.ceil(raw / r) * r;
+    const env = shipFor(p);
+    const rec = Number(cfg.recargo_pct || 0);
+    if (cfg.incluir_comision !== true) {
+      const raw = Math.round(Number(base) * (1 + rec / 100) + env);
+      return Math.ceil(raw / r) * r;
+    }
+    const up = (n) => Math.ceil(Number((n / r).toFixed(6))) * r;
+    const target = Number(base) * (1 + rec / 100);
+    const c = commissionFor(p) / 100;
+    for (const t of FIXED_TIERS) {
+      let price = up((target + env + t.fee) / (1 - c));
+      if (price < t.from) price = up(t.from);
+      if (price < t.to) return price;
+    }
+    return up((target + env) / (1 - c));
   }
   function sizes(p) {
     const t = (Array.isArray(p.tamanos) ? p.tamanos : [])
@@ -199,6 +235,11 @@
     $("ml-dias").value = cfg.dias_fabricacion || "";
     $("ml-garantia").value = cfg.garantia || "";
     $("ml-sync-auto").checked = cfg.sync_auto !== false;
+    ensureCommissionFields();
+    if (hasCommissionCols()) {
+      $("ml-incluir-comision").checked = cfg.incluir_comision === true;
+      $("ml-comision").value = cfg.comision_pct;
+    }
     renderExample();
     $("ml-last-sync").textContent = cfg.ultima_sync_at
       ? "Última sincronización automática: " + new Date(cfg.ultima_sync_at).toLocaleString("es-UY") + " — " + (cfg.ultima_sync_resumen || "")
@@ -207,7 +248,7 @@
 
   function readConfigForm() {
     const n = (id, d) => { const v = Number($(id).value); return $(id).value === "" || isNaN(v) ? d : v; };
-    return {
+    return Object.assign(commissionPatch(), {
       recargo_pct: Math.min(100, Math.max(0, n("ml-recargo", 0))),
       costo_envio: Math.max(0, Math.round(n("ml-envio", 0))),
       redondear_a: Number($("ml-redondeo").value) || 1,
@@ -222,7 +263,34 @@
         return /^\d+\s*(d[ií]as?|mes(es)?|a[ñn]os?)$/.test(g) ? g : "30 días";
       })($("ml-garantia").value),
       sync_auto: $("ml-sync-auto").checked,
+    });
+  }
+  // Los campos de comisión se suman solo si ya corriste el SQL nuevo (si no, la base no los tiene).
+  function commissionPatch() {
+    if (!hasCommissionCols() || !$("ml-comision")) return {};
+    const v = Number($("ml-comision").value);
+    return {
+      incluir_comision: $("ml-incluir-comision").checked,
+      comision_pct: $("ml-comision").value === "" || isNaN(v) ? 14 : Math.min(60, Math.max(0, v)),
     };
+  }
+
+  function ensureCommissionFields() {
+    if ($("ml-comision")) return;
+    const form = $("ml-config-form");
+    const anchor = $("ml-config-save");
+    if (!form || !anchor) return;
+    const box = document.createElement("div");
+    box.id = "ml-comision-box";
+    box.innerHTML =
+      '<div class="grid2">' +
+      '<div class="inline-check" style="margin-top:6px"><input type="checkbox" id="ml-incluir-comision"><label for="ml-incluir-comision">Incluir la comisión de Mercado Libre en el precio</label></div>' +
+      '<div><label for="ml-comision">Comisión por venta de ML (%)</label><input type="number" id="ml-comision" min="0" max="60" step="0.5"></div>' +
+      "</div>" +
+      '<p class="muted" id="ml-comision-help" style="font-size:12px;margin:-4px 0 14px;"></p>';
+    form.insertBefore(box, anchor);
+    ["ml-incluir-comision", "ml-comision"].forEach((id) => $(id).addEventListener("input", () => { renderExample(); }));
+    $("ml-incluir-comision").addEventListener("change", renderExample);
   }
 
   function renderExample() {
@@ -232,10 +300,38 @@
     cfg = draft;
     const base = 650;
     const fin = mlPrice(base);
+    const net = mlNet(fin);
+    const com = commissionFor();
+    const fijo = fixedFee(fin);
     cfg = keep;
+    const help = $("ml-comision-help");
+    if (help) {
+      help.textContent = hasCommissionCols()
+        ? "Mercado Libre cobra entre 11,5 % y 17 % según la categoría (lo ves en ML: \"Conocé el cargo de tu producto\"), más un costo fijo por unidad si el precio es menor a $U 1.000 ($U 15 / 25 / 40). Con esto prendido, el precio se calcula para que esos cargos y el envío no te coman el precio de la web; el \"Recargo\" de arriba pasa a ser tu ganancia extra (puede ser 0). Cada producto puede tener su propia comisión en Opciones."
+        : "Falta correr en Supabase la parte nueva de supabase/migracion_mercadolibre.sql (3 líneas al final) para poder prender esto.";
+      $("ml-incluir-comision").disabled = !hasCommissionCols();
+      $("ml-comision").disabled = !hasCommissionCols();
+    }
+    const incl = draft.incluir_comision === true;
+    // La explicación de arriba (que viene en admin.html) cambia según cómo se calcule el precio.
+    const form = $("ml-config-form");
+    const intro = form && form.previousElementSibling;
+    if (intro && intro.tagName === "P" && /precio web \+ recargo|comisión y el costo fijo/.test(intro.textContent)) {
+      intro.innerHTML = 'Todos los avisos van con <strong>envío gratis</strong>. El precio en ML se calcula solo desde el precio de la web: ' +
+        (incl
+          ? "<em>el precio más bajo con el que, después de la comisión de ML, su costo fijo y el envío, te queda el precio web + el recargo</em>, redondeado hacia arriba."
+          : "<em>precio web + recargo % + costo del envío</em>, redondeado hacia arriba (sin sumar la comisión de ML).") +
+        ' Si cambiás algo acá, tocá "Sincronizar todo" para aplicarlo a lo ya publicado.';
+    }
+    const quedan = net >= base
+      ? "te quedan <strong>" + money(net) + "</strong>"
+      : '<strong class="ml-err" style="display:inline">te quedan solo ' + money(net) + "</strong> (menos que los " + money(base) + " de la web)";
     $("ml-example").innerHTML =
-      "Ejemplo: un producto de <strong>" + money(base) + "</strong> en la web → " + money(base) +
-      " + " + draft.recargo_pct + "% + " + money(draft.costo_envio) + " de envío = <strong>" + money(fin) + "</strong> en Mercado Libre, con envío gratis.";
+      "Ejemplo: un producto de <strong>" + money(base) + "</strong> en la web → " +
+      (incl
+        ? "se publica a <strong>" + money(fin) + "</strong> (con el recargo de " + draft.recargo_pct + "% y el envío de " + money(draft.costo_envio) + ")"
+        : money(base) + " + " + draft.recargo_pct + "% + " + money(draft.costo_envio) + " de envío = <strong>" + money(fin) + "</strong>") +
+      " en Mercado Libre, con envío gratis. Con una comisión de " + com + "%" + (fijo ? " + " + money(fijo) + " de costo fijo" : "") + ", " + quedan + ".";
   }
 
   async function saveConfig(e) {
@@ -262,26 +358,102 @@
 
   const ESTADOS = { active: "Activo", paused: "Pausado", closed: "Finalizado", under_review: "En revisión", inactive: "Inactivo" };
 
+  // Mensajes rojos que dejaba la versión anterior; ya no corresponden (no son errores).
+  const OLD_NOTES = [/^Ese tamaño\/color ya no está en la web/i, /^El aviso está finalizado en Mercado Libre/i];
+  function isOldNote(t) {
+    return OLD_NOTES.some((re) => re.test(String(t || "")));
+  }
+
+  const keyOf = (t, c) => (t || "") + "\u0000" + (c || "");
+
+  // Qué tamaño/color tiene que estar publicado hoy (igual que planUnits en el servidor).
+  function wantedKeys(p, list) {
+    const porColor = list.some((x) => x.color);
+    const seen = new Set();
+    const colors = (Array.isArray(p.colores) ? p.colores : [])
+      .map((c) => String(c == null ? "" : c).trim())
+      .filter((c) => c && !seen.has(c.toLowerCase()) && seen.add(c.toLowerCase()));
+    const keys = [];
+    sizes(p).forEach((s) => {
+      if (!Number.isFinite(s.price) || s.price <= 0) return;
+      if (porColor && colors.length) colors.forEach((c) => keys.push(keyOf(s.name, c)));
+      else keys.push(keyOf(s.name, ""));
+    });
+    return new Set(keys.slice(0, 30));
+  }
+
+  // Separa los avisos vigentes de los "retirados" (color/tamaño que ya no está en la web).
+  function splitPubs(p) {
+    const list = pubsOf(p.id).sort((a, b) => ((a.tamano || "") + (a.color || "")).localeCompare((b.tamano || "") + (b.color || "")));
+    const wanted = wantedKeys(p, list);
+    if (!wanted.size) return { current: list, retired: [] }; // producto sin precio: no se toca nada
+    return {
+      current: list.filter((x) => wanted.has(keyOf(x.tamano, x.color))),
+      retired: list.filter((x) => !wanted.has(keyOf(x.tamano, x.color))),
+    };
+  }
+
+  function pubRowHtml(x) {
+    const label = [x.tamano, x.color].filter(Boolean).join(" · ");
+    const est = x.estado || "active";
+    const err = x.ultimo_error && !isOldNote(x.ultimo_error) ? x.ultimo_error : "";
+    return (
+      '<div class="ml-pub">' +
+      (label ? esc(label) + " " : "") +
+      '<span class="ml-badge ' + esc(est) + '">' + esc(ESTADOS[est] || est) + "</span> " +
+      (x.precio != null ? money(x.precio) + " " : "") +
+      (x.permalink ? '<a href="' + esc(x.permalink) + '" target="_blank" rel="noopener">ver ' + esc(x.ml_item_id) + "</a>" : esc(x.ml_item_id || "")) +
+      (err ? '<div class="ml-err">' + esc(err) + "</div>" : "") +
+      "</div>"
+    );
+  }
+
+  function currentRowHtml(x) {
+    if ((x.estado || "active") !== "closed") return pubRowHtml(x);
+    // Finalizado o borrado desde Mercado Libre: no es un error, se puede publicar de nuevo.
+    return (
+      pubRowHtml(x).replace(/<\/div>$/, "") +
+      '<div class="ml-note">Lo finalizaste o borraste en Mercado Libre; ese aviso no se puede reactivar. ' +
+      'Si ese color/tamaño sigue en la web, podés publicarlo de nuevo.</div>' +
+      '<button type="button" class="btn-secondary btn-small" style="margin-top:4px" data-ml="relist" data-pub="' + esc(x.id) + '">Publicar de nuevo</button>' +
+      "</div>"
+    );
+  }
+
+  function retiredHtml(rows) {
+    const n = rows.length;
+    const activos = rows.some((x) => (x.estado || "active") === "active");
+    return (
+      '<div class="ml-pub ml-retired"><details><summary>' + n + " aviso" + (n > 1 ? "s" : "") + " retirado" + (n > 1 ? "s" : "") +
+      '</summary><div class="ml-note">Ese color o tamaño ya no está en la web.</div>' + rows.map(pubRowHtml).join("") + "</details>" +
+      '<div class="ml-note">' + (activos ? "Se pausan en la próxima sincronización. " : "Están pausados: no se ven en Mercado Libre. ") +
+      '"Limpiar" los finaliza allá y los saca de esta lista.</div>' +
+      '<button type="button" class="btn-secondary btn-small" style="margin-top:4px" data-ml="clean">Limpiar</button></div>'
+    );
+  }
+
   function renderPubs(p) {
-    const list = pubsOf(p.id);
-    if (!list.length) return '<span class="muted">Sin publicar</span>';
-    return list
-      .sort((a, b) => (a.tamano + a.color).localeCompare(b.tamano + b.color))
-      .map((x) => {
-        const label = [x.tamano, x.color].filter(Boolean).join(" · ");
-        const est = x.estado || "active";
-        return (
-          '<div class="ml-pub">' +
-          (label ? esc(label) + " " : "") +
-          '<span class="ml-badge ' + esc(est) + '">' + esc(ESTADOS[est] || est) + "</span> " +
-          (x.precio != null ? money(x.precio) + " " : "") +
-          (x.permalink ? '<a href="' + esc(x.permalink) + '" target="_blank" rel="noopener">ver ' + esc(x.ml_item_id) + "</a>" : esc(x.ml_item_id || "")) +
-          (x.ultimo_error ? '<div class="ml-err">' + esc(x.ultimo_error) + "</div>" : "") +
-          (est === "closed" ? ' <button type="button" class="btn-secondary btn-small" data-ml="unlink" data-pub="' + esc(x.id) + '">Desvincular</button>' : "") +
-          "</div>"
-        );
-      })
-      .join("");
+    if (!pubsOf(p.id).length) return '<span class="muted">Sin publicar</span>';
+    const { current, retired } = splitPubs(p);
+    return current.map(currentRowHtml).join("") + (retired.length ? retiredHtml(retired) : "");
+  }
+
+  // Cuánto te queda por venta, comparado con el precio de la web (el peor tamaño del producto).
+  function marginLine(p) {
+    let worst = null;
+    sizes(p).forEach((sz) => {
+      if (!Number.isFinite(sz.price) || sz.price <= 0) return;
+      const price = mlPrice(sz.price, p);
+      const net = mlNet(price, p);
+      const diff = net - sz.price;
+      if (!worst || diff < worst.diff) worst = { diff, net, web: sz.price, name: sz.name };
+    });
+    if (!worst) return "";
+    const com = commissionFor(p) + "%" + (p.ml_comision_pct != null && p.ml_comision_pct !== "" ? " propia" : "");
+    const tip = "Después de la comisión de ML (" + com + " + costo fijo) y del envío gratis. Es una estimación con la comisión que cargaste.";
+    return worst.diff < -0.5
+      ? '<div class="ml-err" title="' + esc(tip) + '">te quedan ' + money(worst.net) + " · " + money(-worst.diff) + " menos que la web</div>"
+      : '<div class="muted" style="font-size:11px" title="' + esc(tip) + '">te quedan ' + money(worst.net) + "</div>";
   }
 
   function renderTable() {
@@ -299,7 +471,7 @@
           "<td><strong>" + esc(p.nombre) + "</strong>" + (p.activo === false ? '<div class="muted" style="font-size:11px">Oculto en la web</div>' : "") + "</td>" +
           "<td>" + priceRange(p, (n) => n) + "</td>" +
           "<td>" + (cfg ? priceRange(p, (n) => mlPrice(n, p)) +
-            '<div class="muted" style="font-size:11px">envío ' + money(shipFor(p)) + (p.ml_costo_envio != null ? " (propio)" : " (general)") + "</div>" : "—") + "</td>" +
+            '<div class="muted" style="font-size:11px">envío ' + money(shipFor(p)) + (p.ml_costo_envio != null ? " (propio)" : " (general)") + "</div>" + marginLine(p) : "—") + "</td>" +
           "<td>" + renderPubs(p) + "</td>" +
           '<td><div class="ml-actions">' +
           '<button type="button" class="btn-secondary btn-small" data-ml="preview">Vista previa</button>' +
@@ -318,6 +490,40 @@
   }
 
   /* ------------------------------------------------------------ vista previa */
+  // Bloque "Comisión y margen" de la vista previa: compara lo configurado con lo que ML cobra de verdad.
+  function comisionHtml(id, pv) {
+    const c = pv.comision;
+    if (!c) return "";
+    const p = productos.find((x) => x.id === id);
+    let html = "<h4>Comisión y margen</h4>";
+    const objetivo = money(c.objetivo);
+    if (c.real) {
+      const ok = c.real.neto >= c.objetivo - 1;
+      html +=
+        "<p>Con el precio de <strong>" + money(c.precio_ml) + "</strong>, Mercado Libre cobra <strong>" + c.real.pct + "%</strong>" +
+        (c.real.fijo ? " + " + money(c.real.fijo) + " fijos" : "") + " = " + money(c.real.total) + ", y el envío gratis te cuesta " + money(c.envio) +
+        ". Te quedan <strong>" + money(c.real.neto) + "</strong>. " +
+        (ok
+          ? '<span class="ml-ok">Cubre el precio de la web' + (c.objetivo > 0 ? " (" + objetivo + ")" : "") + ".</span>"
+          : '<span class="ml-err" style="display:inline">Es menos que ' + objetivo + " (precio web + tu recargo): perdés " + money(c.objetivo - c.real.neto) + " por venta.</span>") +
+        "</p>";
+      const diff = Math.abs(c.real.pct - c.configurada_pct) >= 0.5;
+      if (diff) {
+        html += '<p class="muted" style="font-size:12px">Tenés cargada una comisión de ' + c.configurada_pct + "% " + (c.propia ? "(propia de este producto)" : "(la general)") +
+          ", pero en esta categoría ML cobra " + c.real.pct + "%.</p>";
+        if (p && "ml_comision_pct" in p) {
+          html += '<div class="ml-actions" style="margin-bottom:8px"><button type="button" class="btn-secondary btn-small" data-ml="usepct" data-pct="' + esc(c.real.pct) + '">Usar ' + esc(c.real.pct) + "% en este producto</button></div>";
+        }
+      }
+    } else {
+      html += '<p class="muted">No pude consultar a ML cuánto cobra en esta categoría. Con la comisión que cargaste (' + c.configurada_pct + "%) te quedan " + money(c.neto_modelo) + " (objetivo: " + objetivo + ").</p>";
+    }
+    if (!c.incluida) {
+      html += '<p class="muted" style="font-size:12px">La comisión todavía <strong>no está incluida</strong> en el precio. Para que ML no te coma el precio de la web, prendé "Incluir la comisión de Mercado Libre en el precio" en la configuración de arriba.</p>';
+    }
+    return html;
+  }
+
   function previewHtml(id) {
     const pv = previews.get(id);
     if (!pv) return '<div class="ml-box">Armando la vista previa…</div>';
@@ -325,7 +531,7 @@
     const avisos = pv.avisos_ml
       .map((a) =>
         "<li><strong>" + esc(a.titulo) + "</strong>" + (a.color ? " · " + esc(a.color) : "") + " — " + money(a.precio_ml) +
-        ' <span class="muted">(web ' + money(a.precio_web) + ")</span>" +
+        ' <span class="muted">(web ' + money(a.precio_web) + (a.neto != null ? " · te quedan " + money(a.neto) : "") + ")</span>" +
         (a.activo ? "" : ' <span class="ml-badge paused">sin stock / oculto: no se publica</span>') +
         (a.variantes.length ? '<br><span class="muted">Variantes: ' + a.variantes.map((v) => esc(v.color) + (v.stock ? "" : " (sin stock)")).join(", ") + "</span>" : "") +
         "</li>"
@@ -346,6 +552,7 @@
       '<div class="ml-box">' + val +
       "<h4>Categoría</h4><p>" + esc(pv.categoria.ruta || pv.categoria.nombre) + ' <span class="muted">(' + esc(pv.categoria.id) +
       (pv.categoria.sugerida ? ", sugerida por ML — si no es la correcta, cambiala en Opciones" : "") + ")</span></p>" +
+      comisionHtml(id, pv) +
       "<h4>Avisos que se crean</h4>" +
       (pv.por_color && pv.avisos_ml.length > 1
         ? '<p class="muted" style="font-size:12px;margin-bottom:6px">Mercado Libre pide un aviso por color, pero los junta en <strong>una sola publicación</strong> con selector de color: el comprador ve una ficha y elige el color ahí.</p>'
@@ -399,6 +606,10 @@
       '<div><label>Atributos extra (uno por línea: ID = valor)</label><textarea name="attrs" rows="3" placeholder="MATERIAL = PLA&#10;SHAPE = Redondo">' + esc(attrsToText(p.ml_atributos)) + "</textarea></div></div>" +
       '<div class="grid2"><div><label>Costo del envío gratis de este producto ($U)</label><input type="number" name="envio" min="0" step="1" placeholder="Vacío = el general (' + esc(money(cfg ? cfg.costo_envio : 0)) + ')" value="' + esc(p.ml_costo_envio != null ? p.ml_costo_envio : "") + '"></div>' +
       '<div class="muted" style="font-size:12px;padding-top:22px">Lo ves en Mercado Libre → Publicaciones, columna Envíos ("Pagás $ …"). Se suma al precio de este producto en ML.</div></div>' +
+      ("ml_comision_pct" in p
+        ? '<div class="grid2"><div><label>Comisión de ML de este producto (%)</label><input type="number" name="comision" min="0" max="60" step="0.5" placeholder="Vacío = la general (' + esc(commissionFor(null)) + '%)" value="' + esc(p.ml_comision_pct != null ? p.ml_comision_pct : "") + '"></div>' +
+          '<div class="muted" style="font-size:12px;padding-top:22px">Lo que cobra ML por venta en la categoría de este producto (la Vista previa te dice cuál es). Solo cuenta si "Incluir la comisión" está prendido.</div></div>'
+        : "") +
       '<label>Descripción para Mercado Libre (opcional)</label>' +
       '<textarea name="desc" rows="6" placeholder="Vacío = se usa la descripción de la web, pasada a texto plano. Sin links, teléfonos ni redes: ML no los permite.">' + esc(p.descripcion_ml || "") + "</textarea>" +
       '<div class="ml-actions"><button type="submit" class="btn btn-small">Guardar opciones</button>' +
@@ -430,6 +641,16 @@
       ml_atributos: textToAttrs(form.attrs.value),
       descripcion_ml: form.desc.value.trim() || null,
     };
+    if (form.comision) {
+      const txt = form.comision.value.trim();
+      const com = txt === "" ? null : Number(txt);
+      if (com !== null && (!Number.isFinite(com) || com < 0 || com > 60)) {
+        msg.className = "error-msg";
+        msg.textContent = "La comisión tiene que ser un porcentaje entre 0 y 60 (o dejala vacía para usar la general).";
+        return;
+      }
+      patch.ml_comision_pct = com;
+    }
     const { error } = await stratoSb.from("productos").update(patch).eq("id", id);
     if (error) {
       msg.className = "error-msg";
@@ -447,23 +668,50 @@
       : "Guardado. Probá la vista previa.";
   }
 
+  // Guarda en el producto la comisión real que cobra ML (la que mostró la vista previa).
+  async function usePct(id, pct) {
+    const v = Number(pct);
+    const p = productos.find((x) => x.id === id);
+    if (!p || !Number.isFinite(v)) return;
+    const { error } = await stratoSb.from("productos").update({ ml_comision_pct: v }).eq("id", id);
+    const prog = $("ml-progress");
+    if (error) {
+      prog.className = "ml-progress ml-err";
+      prog.textContent = "No se pudo guardar la comisión: " + error.message;
+      return;
+    }
+    p.ml_comision_pct = v;
+    previews.delete(id);
+    openRows.delete(id);
+    prog.className = "ml-progress ml-ok";
+    prog.textContent = p.nombre + ": comisión de " + v + "% guardada. " +
+      (cfg && cfg.incluir_comision === true ? "Tocá Sincronizar para aplicar el precio nuevo en ML." : 'Falta prender "Incluir la comisión de Mercado Libre en el precio" en la configuración y sincronizar.');
+    renderTable();
+  }
+
   /* ------------------------------------------------------------ publicar / sincronizar */
   function summary(r) {
     const parts = [];
     if (r.creados) parts.push(r.creados + " aviso" + (r.creados > 1 ? "s" : "") + " nuevo" + (r.creados > 1 ? "s" : ""));
     if (r.actualizados) parts.push(r.actualizados + " actualizado" + (r.actualizados > 1 ? "s" : ""));
     if (r.pausados) parts.push(r.pausados + " pausado" + (r.pausados > 1 ? "s" : ""));
+    if (r.vinculados) parts.push(r.vinculados + " aviso" + (r.vinculados > 1 ? "s" : "") + " de ML vinculado" + (r.vinculados > 1 ? "s" : ""));
+    if (r.renombrados) parts.push("nombre nuevo en " + r.renombrados + " aviso" + (r.renombrados > 1 ? "s" : ""));
+    if (r.limpiados) parts.push(r.limpiados + " borrado" + (r.limpiados > 1 ? "s" : "") + " en ML quitado" + (r.limpiados > 1 ? "s" : "") + " de la lista");
     if (!parts.length && !r.errores.length) parts.push("sin cambios");
     return parts.join(", ");
   }
 
   async function runProduct(id, action, force) {
-    let total = { creados: 0, actualizados: 0, pausados: 0, errores: [], avisos: [] };
+    let total = { creados: 0, actualizados: 0, pausados: 0, renombrados: 0, limpiados: 0, vinculados: 0, errores: [], avisos: [] };
     for (let i = 0; i < 6; i++) {
       const r = await api(action, { producto_id: id, force: !!force });
       total.creados += r.creados || 0;
       total.actualizados += r.actualizados || 0;
       total.pausados += r.pausados || 0;
+      total.renombrados += r.renombrados || 0;
+      total.vinculados += r.vinculados || 0;
+      total.limpiados += r.limpiados || 0;
       total.errores = total.errores.concat(r.errores || []);
       total.avisos = total.avisos.concat(r.avisos || []);
       if (!r.pendiente) break;
@@ -540,20 +788,77 @@
     }
   }
 
-  async function unlink(pubId) {
-    if (!confirm("¿Desvincular este aviso? No se borra de Mercado Libre; solo deja de estar conectado con la web, y el producto se puede volver a publicar.")) return;
+  // Finaliza en ML los avisos retirados (color/tamaño que ya no está en la web) y los saca de la lista.
+  async function doClean(id, btn) {
+    if (busy) return;
+    const p = productos.find((x) => x.id === id);
+    const n = p ? splitPubs(p).retired.length : 0;
+    if (!n) return;
+    if (!confirm(
+      "¿Finalizar en Mercado Libre " + (n === 1 ? "el aviso retirado" : "los " + n + " avisos retirados") + " de \"" + p.nombre + "\"?\n\n" +
+      "Ese color/tamaño ya no está en tu web. Finalizar es definitivo: un aviso finalizado no se puede reactivar (si más adelante lo querés, se publica uno nuevo)."
+    )) return;
+    busy = true;
+    if (btn) btn.disabled = true;
+    const prog = $("ml-progress");
+    prog.className = "ml-progress";
+    prog.textContent = "Limpiando " + p.nombre + "…";
+    try {
+      let quitados = 0, errs = [];
+      for (let i = 0; i < 8; i++) {
+        const r = await api("clean", { producto_id: id });
+        quitados += r.quitados || 0;
+        errs = errs.concat(r.errores || []);
+        if (!r.pendiente) break;
+      }
+      await reloadPubs();
+      prog.className = "ml-progress " + (errs.length ? "ml-err" : "ml-ok");
+      prog.textContent = p.nombre + ": " + quitados + " aviso" + (quitados === 1 ? "" : "s") + " finalizado" + (quitados === 1 ? "" : "s") +
+        " y quitado" + (quitados === 1 ? "" : "s") + " de la lista." + (errs.length ? " No se pudo con: " + errs.join(" | ") : "");
+    } catch (e) {
+      prog.className = "ml-progress ml-err";
+      prog.textContent = e.message;
+      if (e.code === "RECONNECT" || e.code === "NOT_CONNECTED") refreshStatus();
+    } finally {
+      busy = false;
+      renderTable();
+    }
+  }
+
+  // Un aviso finalizado en ML no se puede reactivar: se desvincula y la sincronización crea uno nuevo.
+  async function relist(pubId, btn) {
+    if (busy) return;
+    const pub = pubs.find((x) => x.id === pubId);
+    if (!pub) return;
+    if (!confirm("¿Publicar de nuevo este aviso? Se crea uno nuevo en Mercado Libre (el finalizado no se puede reactivar).")) return;
     try {
       await api("unlink", { publicacion_id: pubId });
       await reloadPubs();
-      renderTable();
     } catch (e) {
       $("ml-progress").className = "ml-progress ml-err";
       $("ml-progress").textContent = e.message;
+      return;
     }
+    await doRun(pub.producto_id, "sync", btn);
+  }
+
+  // Estilos de lo nuevo (avisos retirados / finalizados), sin tocar admin.html.
+  function injectStyles() {
+    if (document.getElementById("ml-extra-style")) return;
+    const st = document.createElement("style");
+    st.id = "ml-extra-style";
+    st.textContent =
+      "#ml-tbody .ml-badge.closed{background:rgba(0,0,0,.07);color:#6b6b6b}" +
+      "#ml-tbody .ml-note{color:#6b6b6b;font-size:12px;margin-top:2px}" +
+      "#ml-tbody .ml-retired{margin-top:6px;padding:6px 8px;border:1px dashed var(--border);border-radius:3px;background:rgba(0,0,0,.02)}" +
+      "#ml-tbody .ml-retired summary{cursor:pointer;color:#6b6b6b}" +
+      "#ml-tbody .ml-retired .ml-badge{background:rgba(0,0,0,.07);color:#6b6b6b}";
+    document.head.appendChild(st);
   }
 
   /* ------------------------------------------------------------ eventos */
   function bind() {
+    injectStyles();
     $("ml-connect-btn").addEventListener("click", connect);
     $("ml-disconnect-btn").addEventListener("click", disconnect);
     $("ml-config-form").addEventListener("submit", saveConfig);
@@ -564,7 +869,11 @@
       const btn = e.target.closest("[data-ml]");
       if (!btn) return;
       const action = btn.getAttribute("data-ml");
-      if (action === "unlink") return unlink(btn.getAttribute("data-pub"));
+      if (action === "relist") return relist(btn.getAttribute("data-pub"), btn);
+      if (action === "usepct") {
+        const row = btn.closest("tr").previousElementSibling;
+        return usePct(row && row.getAttribute("data-id"), btn.getAttribute("data-pct"));
+      }
       const tr = btn.closest("tr[data-id]") || btn.closest("tr").previousElementSibling;
       const id = tr && tr.getAttribute("data-id");
       if (!id) return;
@@ -573,7 +882,8 @@
         if (openRows.get(id) === "options") openRows.delete(id);
         else openRows.set(id, "options");
         renderTable();
-      } else if (action === "publish" || action === "sync") doRun(id, action, btn);
+      } else if (action === "clean") doClean(id, btn);
+      else if (action === "publish" || action === "sync") doRun(id, action, btn);
     });
     $("ml-tbody").addEventListener("submit", (e) => {
       const form = e.target.closest("form[data-ml-options]");
