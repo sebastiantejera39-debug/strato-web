@@ -27,7 +27,7 @@ exports.handler = async () => {
     });
     const ids = Array.from(oldest.keys()).sort((a, b) => oldest.get(a) - oldest.get(b));
 
-    let hechos = 0, actualizados = 0, creados = 0, pausados = 0, errores = 0;
+    let hechos = 0, actualizados = 0, creados = 0, pausados = 0, limpiados = 0, renombrados = 0, vinculados = 0, errores = 0;
     for (const id of ids) {
       if (Date.now() > deadline - 3000) break;
       try {
@@ -36,6 +36,9 @@ exports.handler = async () => {
         actualizados += r.actualizados;
         creados += r.creados;
         pausados += r.pausados;
+        limpiados += r.limpiados || 0;
+        renombrados += r.renombrados || 0;
+        vinculados += r.vinculados || 0;
         errores += r.errores.length;
       } catch (e) {
         errores++;
@@ -44,7 +47,10 @@ exports.handler = async () => {
       }
     }
     const resumen = hechos + ' de ' + ids.length + ' productos revisados · ' + actualizados + ' actualizados · ' +
-      creados + ' avisos nuevos · ' + pausados + ' pausados' + (errores ? ' · ' + errores + ' con error' : '');
+      creados + ' avisos nuevos · ' + pausados + ' pausados' +
+      (renombrados ? ' · ' + renombrados + ' con nombre nuevo' : '') +
+      (vinculados ? ' · ' + vinculados + (vinculados > 1 ? ' avisos de ML vinculados' : ' aviso de ML vinculado') : '') +
+      (limpiados ? ' · ' + limpiados + ' borrados en ML quitados de la lista' : '') + (errores ? ' · ' + errores + ' con error' : '');
     await ml.sb('ml_config?id=eq.1', {
       method: 'PATCH',
       prefer: 'return=minimal',
