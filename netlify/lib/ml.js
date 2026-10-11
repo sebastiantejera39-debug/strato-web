@@ -507,18 +507,67 @@ function truncate(s, n) {
 /* Categoría y atributos de Mercado Libre                               */
 /* ------------------------------------------------------------------ */
 
-async function loadCategoryContext(ml, p) {
+// Palabras con las que se prueba que ML sugiera una categoría. En Uruguay ML las llama de una forma
+// y la gente de otra ("portafotos" → "portarretratos"), así que se prueba también con la palabra de ML.
+const NAME_SYNONYMS = [
+  [/\bporta[\s-]?(?:fotos?|retratos?)\b|\bportarretratos?\b/i, 'portarretratos'],
+];
+
+function categoryQueries(name, broad) {
+  const base = truncate(name, 80);
+  const out = [base];
+  for (const [re, word] of NAME_SYNONYMS) {
+    if (!re.test(base)) continue;
+    // Lo que se imprime en 3D son portarretratos comunes: sin esto ML puede mandarlo a "digitales",
+    // que piden datos de electrónica (tipo de alimentación) que no corresponden.
+    if (!/digital/i.test(base)) out.push(word + ' convencionales');
+    out.push(base.replace(re, word));
+    out.push(word);
+  }
+  // Para ofrecer más opciones: solo la primera palabra del nombre ("Comedero doble" → "comedero"),
+  // que suele traer categorías más generales que el nombre completo.
+  const first = base.split(/\s+/)[0];
+  if (broad && base.split(/\s+/).length > 1 && first.length >= 4) out.push(first.toLowerCase());
+  return Array.from(new Set(out.map((x) => x.trim()).filter(Boolean)));
+}
+
+// Pregunta a ML qué categorías le parecen para el nombre del producto. Devuelve las candidatas (sin repetir)
+// en el orden de ML; con onlyFirst corta apenas una consulta devuelve algo.
+async function suggestCategories(ml, name, onlyFirst) {
+  const found = [];
+  let lastStatus = null;
+  for (const query of categoryQueries(name, !onlyFirst)) {
+    const r = await ml.get('/sites/' + SITE_ID + '/domain_discovery/search?limit=' + (onlyFirst ? 1 : 5) + '&q=' + encodeURIComponent(query));
+    if (r.ok && Array.isArray(r.data)) {
+      r.data.forEach((x) => {
+        if (x && x.category_id && !found.some((f) => f.id === x.category_id)) {
+          found.push({ id: x.category_id, nombre: x.category_name || x.domain_name || x.category_id });
+        }
+      });
+      if (onlyFirst && found.length) break;
+    } else {
+      lastStatus = r.ok ? lastStatus : r.status;
+    }
+  }
+  return { found, lastStatus };
+}
+
+async function loadCategoryContext(ml, p, opts) {
   let categoryId = p.ml_categoria_id && String(p.ml_categoria_id).trim().toUpperCase();
   let predicted = null;
-  if (!categoryId) {
-    const q = encodeURIComponent(truncate(p.nombre, 80));
-    const r = await ml.get('/sites/' + SITE_ID + '/domain_discovery/search?limit=1&q=' + q);
-    if (r.ok && Array.isArray(r.data) && r.data[0] && r.data[0].category_id) {
-      predicted = r.data[0];
-      categoryId = predicted.category_id;
-    } else {
-      throw new HttpError(422, 'Mercado Libre no pudo sugerir una categoría para "' + p.nombre + '". Cargala a mano en Opciones (por ejemplo MLU1234).', 'NO_CATEGORY');
+  let alternatives = [];
+  if (!categoryId || (opts && opts.alternatives)) {
+    const sug = await suggestCategories(ml, p.nombre, !(opts && opts.alternatives));
+    if (!categoryId) {
+      if (!sug.found.length) {
+        throw new HttpError(422, 'Mercado Libre no pudo sugerir una categoría para "' + p.nombre + '"' +
+          (sug.lastStatus ? ' (ML respondió con error ' + sug.lastStatus + ')' : '') +
+          '. Cargala a mano en Opciones (tiene que ser un código como MLU1234).', 'NO_CATEGORY');
+      }
+      predicted = sug.found[0];
+      categoryId = predicted.id;
     }
+    alternatives = sug.found.filter((x) => x.id !== categoryId).slice(0, 5);
   }
   if (!/^MLU\d+$/.test(categoryId)) {
     throw new HttpError(422, 'La categoría "' + categoryId + '" no es válida: tiene que ser algo como MLU1234.', 'BAD_CATEGORY');
@@ -534,9 +583,10 @@ async function loadCategoryContext(ml, p) {
   const settings = (cat.data && cat.data.settings) || {};
   return {
     categoryId,
-    categoryName: (cat.data && cat.data.name) || (predicted && predicted.category_name) || categoryId,
+    categoryName: (cat.data && cat.data.name) || (predicted && predicted.nombre) || categoryId,
     path: Array.isArray(cat.data && cat.data.path_from_root) ? cat.data.path_from_root.map((x) => x.name).join(' › ') : '',
     predicted: !!predicted,
+    alternatives,
     maxTitle: Number(settings.max_title_length) || 60,
     attributes,
     byId,
@@ -793,7 +843,7 @@ async function realFee(ml, categoryId, listingType, price) {
 async function preview(productId) {
   const [p, cfg, availability, access] = await Promise.all([loadProduct(productId), getConfig(), loadColorAvailability(), getAccess()]);
   const ml = makeMl(access);
-  const ctx = await loadCategoryContext(ml, p);
+  const ctx = await loadCategoryContext(ml, p, { alternatives: true });
   const mode = access.account.user_products ? 'user_products' : 'clasico';
   const porColor = mode === 'user_products' || !ctx.colorAsVariation;
   const { units, problems } = planUnits(p, cfg, availability, porColor);
@@ -858,7 +908,7 @@ async function preview(productId) {
   const missing = items[0] ? items[0].built.missing : [];
   return {
     comision,
-    categoria: { id: ctx.categoryId, nombre: ctx.categoryName, ruta: ctx.path, sugerida: ctx.predicted },
+    categoria: { id: ctx.categoryId, nombre: ctx.categoryName, ruta: ctx.path, sugerida: ctx.predicted, alternativas: ctx.alternatives || [] },
     modo: mode,
     por_color: porColor,
     avisos_ml: items.map((it) => ({
