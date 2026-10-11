@@ -524,6 +524,22 @@
     return html;
   }
 
+  // Otras categorías que sugiere ML, para cuando la elegida no es la correcta (por ejemplo una de electrónica
+  // que pide "tipo de alimentación"). "Usar esta" la deja fija en el producto.
+  function categoriasHtml(id, pv) {
+    const alt = (pv.categoria && pv.categoria.alternativas) || [];
+    const p = productos.find((x) => x.id === id);
+    if (!alt.length || !p || !("ml_categoria_id" in p)) {
+      return alt.length ? '<p class="muted" style="font-size:12px">Si no es la correcta, cambiala en Opciones.</p>' : '<p class="muted" style="font-size:12px">Si no es la correcta, cambiala en Opciones (Categoría).</p>';
+    }
+    return (
+      '<p class="muted" style="font-size:12px;margin-bottom:4px">¿No es esa? Mercado Libre también sugiere estas. Tocá "Usar esta" y se vuelve a validar:</p><ul style="margin-bottom:10px">' +
+      alt.map((x) =>
+        "<li>" + esc(x.nombre) + ' <span class="muted">(' + esc(x.id) + ')</span> <button type="button" class="btn-secondary btn-small" data-ml="usecat" data-cat="' + esc(x.id) + '">Usar esta</button></li>'
+      ).join("") + "</ul>"
+    );
+  }
+
   function previewHtml(id) {
     const pv = previews.get(id);
     if (!pv) return '<div class="ml-box">Armando la vista previa…</div>';
@@ -551,7 +567,8 @@
     return (
       '<div class="ml-box">' + val +
       "<h4>Categoría</h4><p>" + esc(pv.categoria.ruta || pv.categoria.nombre) + ' <span class="muted">(' + esc(pv.categoria.id) +
-      (pv.categoria.sugerida ? ", sugerida por ML — si no es la correcta, cambiala en Opciones" : "") + ")</span></p>" +
+      (pv.categoria.sugerida ? ", sugerida por ML" : "") + ")</span></p>" +
+      categoriasHtml(id, pv) +
       comisionHtml(id, pv) +
       "<h4>Avisos que se crean</h4>" +
       (pv.por_color && pv.avisos_ml.length > 1
@@ -666,6 +683,25 @@
     (m2 || msg).textContent = pubsOf(id).length
       ? "Guardado. Tocá Sincronizar para mandar el precio y la descripción nuevos a ML."
       : "Guardado. Probá la vista previa.";
+  }
+
+  // Guarda la categoría elegida en la vista previa y la vuelve a validar.
+  async function useCat(id, cat) {
+    cat = String(cat || "").trim().toUpperCase();
+    const p = productos.find((x) => x.id === id);
+    if (!p || !/^MLU\d+$/.test(cat)) return;
+    const { error } = await stratoSb.from("productos").update({ ml_categoria_id: cat }).eq("id", id);
+    const prog = $("ml-progress");
+    if (error) {
+      prog.className = "ml-progress ml-err";
+      prog.textContent = "No se pudo guardar la categoría: " + error.message;
+      return;
+    }
+    p.ml_categoria_id = cat;
+    prog.className = "ml-progress ml-ok";
+    prog.textContent = p.nombre + ": categoría " + cat + " guardada. Estoy armando la vista previa de nuevo…";
+    openRows.delete(id);
+    doPreview(id);
   }
 
   // Guarda en el producto la comisión real que cobra ML (la que mostró la vista previa).
@@ -870,6 +906,10 @@
       if (!btn) return;
       const action = btn.getAttribute("data-ml");
       if (action === "relist") return relist(btn.getAttribute("data-pub"), btn);
+      if (action === "usecat") {
+        const row = btn.closest("tr").previousElementSibling;
+        return useCat(row && row.getAttribute("data-id"), btn.getAttribute("data-cat"));
+      }
       if (action === "usepct") {
         const row = btn.closest("tr").previousElementSibling;
         return usePct(row && row.getAttribute("data-id"), btn.getAttribute("data-pct"));
