@@ -13,6 +13,8 @@
 //   clean         → { producto_id } finaliza en ML los avisos "retirados" (color/tamaño que
 //                   ya no está en la web) y los saca de la lista
 //   unlink        → { publicacion_id } desvincula un aviso (no lo borra de ML)
+//   hide          → { publicacion_ids, oculto? } saca de la lista avisos ya finalizados en ML (o, con
+//                   oculto:false, los vuelve a mostrar). No toca nada en ML y no se vuelven a publicar solos.
 
 'use strict';
 
@@ -95,6 +97,9 @@ exports.handler = async (event) => {
         await ml.sb('ml_publicaciones?id=eq.' + body.publicacion_id, { method: 'DELETE', prefer: 'return=minimal' });
         return ml.reply(200, { ok: true });
       }
+
+      case 'hide':
+        return ml.reply(200, await ml.hidePubs(body.publicacion_ids, body.oculto !== false));
 
       default:
         throw new ml.HttpError(400, 'Acción desconocida.');
