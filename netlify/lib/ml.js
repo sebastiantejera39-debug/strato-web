@@ -568,6 +568,13 @@ async function loadCategoryContext(ml, p, opts) {
       categoryId = predicted.id;
     }
     alternatives = sug.found.filter((x) => x.id !== categoryId).slice(0, 5);
+    // Con la ruta completa se nota si es de Perros, Gatos, etc. (el nombre solo no alcanza: hay varias "Comederos").
+    await Promise.all(alternatives.map(async (x) => {
+      try {
+        const c = await ml.get('/categories/' + x.id);
+        if (c.ok && c.data && Array.isArray(c.data.path_from_root)) x.ruta = c.data.path_from_root.map((n) => n.name).join(' › ');
+      } catch (e) { /* sin ruta: se muestra solo el nombre */ }
+    }));
   }
   if (!/^MLU\d+$/.test(categoryId)) {
     throw new HttpError(422, 'La categoría "' + categoryId + '" no es válida: tiene que ser algo como MLU1234.', 'BAD_CATEGORY');
@@ -805,6 +812,27 @@ async function deletePub(id) {
   await sb('ml_publicaciones?id=eq.' + id, { method: 'DELETE', prefer: 'return=minimal' });
 }
 
+// Saca de la lista del panel avisos que ya estaban finalizados en ML (o los vuelve a mostrar). No toca nada
+// en Mercado Libre. Se guarda en la fila (columna "oculto") y no se borra: si se borrara, la próxima
+// sincronización volvería a crear el aviso de un color que sigue en la web.
+async function hidePubs(ids, hidden) {
+  ids = Array.from(new Set((Array.isArray(ids) ? ids : []).map(String))).slice(0, 60);
+  if (!ids.length || ids.some((id) => !UUID_RE.test(id))) throw new HttpError(400, 'Publicaciones inválidas.', 'BAD_ID');
+  const hide = hidden !== false;
+  // Solo se pueden sacar los finalizados: sacar uno activo lo dejaría vivo en ML sin que la web lo controle.
+  const filter = 'id=in.(' + ids.join(',') + ')' + (hide ? '&estado=eq.closed' : '');
+  const r = await sb('ml_publicaciones?' + filter, { method: 'PATCH', prefer: 'return=representation', body: { oculto: hide }, allowError: true });
+  if (r.error) {
+    const msg = (r.error.data && (r.error.data.message || r.error.data.hint)) || '';
+    if (/oculto/i.test(msg) || r.error.status === 400) {
+      throw new HttpError(422, 'Falta correr en Supabase la línea nueva de supabase/migracion_mercadolibre.sql (sección 4c).', 'NEEDS_SQL');
+    }
+    throw new HttpError(502, 'Error de la base de datos: ' + (msg || 'error ' + r.error.status), 'DB_ERROR');
+  }
+  const cambiados = Array.isArray(r.data) ? r.data.length : 0;
+  return { cambiados, omitidos: ids.length - cambiados };
+}
+
 function descriptionFor(p, cfg, unit, ctxColorNote) {
   let d = buildDescription(p, cfg);
   if (ctxColorNote && unit.colors.length > 1) {
@@ -868,6 +896,22 @@ async function preview(productId) {
     validacion = v.ok || v.status === 204 || onlyWarnings
       ? { ok: true, con_avisos: onlyWarnings }
       : { ok: false, mensaje: mlErrorMessage(v.data), detalle: JSON.stringify(v.data || {}).slice(0, 2000) };
+    if (!validacion.ok) {
+      // ML a veces exige datos que la lista de la categoría no marca como obligatorios (por canal de venta):
+      // se suman a "Datos obligatorios que faltan" para que se puedan cargar.
+      causes.filter((c) => c && c.code === 'item.attributes.missing_required').forEach((c) => {
+        const m = /attributes?\s*\[([^\]]+)\]/i.exec(String(c.message || ''));
+        (m ? m[1].split(',') : []).map((x) => x.trim().toUpperCase()).filter(Boolean).forEach((id) => {
+          if (items[0].built.missing.some((x) => x.id === id)) return;
+          const a = ctx.byId.get(id);
+          items[0].built.missing.push({
+            id, nombre: (a && a.name) || id,
+            valores: (a && Array.isArray(a.values) ? a.values : []).slice(0, 12).map((x) => x.name),
+            pedido_por_ml: true,
+          });
+        });
+      });
+    }
     if (validacion.ok) {
       mlWarnings(v.data)
         .filter((w) => !/has not mode me1/i.test(w)) // me1 es el sistema viejo de envíos: no aplica
@@ -1085,7 +1129,7 @@ async function reconcile(productId, opts) {
     let pub = byKey.get(key(unit.tamano, unit.color));
     let rm = pub && pub.ml_item_id ? remote.get(pub.ml_item_id) : undefined;
     try {
-      if (unit.active && (!pub || !pub.ml_item_id || pub.estado === 'closed')) {
+      if (unit.active && !(pub && pub.oculto) && (!pub || !pub.ml_item_id || pub.estado === 'closed')) {
         const adopted = await adoptFor(unit);
         if (adopted) { pub = adopted.pub; rm = adopted.remote; byKey.set(key(unit.tamano, unit.color), pub); }
       }
@@ -1283,6 +1327,7 @@ async function renameIfNeeded(ml, p, unit, pub, result, extra) {
 
 async function updateUnit(ml, p, cfg, unit, pub, result, force, colorNote, extra) {
   extra = extra || {};
+  if (pub.estado === 'closed' && pub.oculto) return; // la sacaste de la lista: no se muestra ni se vuelve a publicar
   if (pub.estado === 'closed') {
     // Finalizado o borrado desde Mercado Libre: no se puede reactivar. No es un error:
     // el panel lo muestra con "Publicar de nuevo". No se vuelve a crear solo, para no
@@ -1461,4 +1506,5 @@ module.exports = {
   fetchRemote,
   mlErrorMessage,
   UUID_RE,
+  hidePubs,
 };
