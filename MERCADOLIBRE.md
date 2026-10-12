@@ -6,7 +6,7 @@ Desde la pestaña **Mercado Libre** de `/admin.html` publicás tus productos con
 
 ## 1. Supabase (2 minutos)
 
-1. **SQL Editor →** pegá todo `supabase/migracion_mercadolibre.sql` **→ Run**. Se puede correr de nuevo cuantas veces quieras: solo agrega lo que falta. (Si ya la corriste antes, volvé a correrla una vez: la sección 4b agrega la comisión de ML.)
+1. **SQL Editor →** pegá todo `supabase/migracion_mercadolibre.sql` **→ Run**. Se puede correr de nuevo cuantas veces quieras: solo agrega lo que falta. (Si ya la corriste antes, volvé a correrla una vez: la sección 4b agrega la comisión de ML y la 4c el botón ✕ para sacar avisos finalizados.)
 2. **Project Settings → API Keys →** copiá la **secret key** (empieza con `sb_secret_…`; en proyectos viejos se llama `service_role`). **No la pegues nunca en el sitio ni en GitHub.**
 
 ## 2. Aplicación en Mercado Libre (5 minutos)
@@ -77,6 +77,16 @@ Si un aviso de la web quedó **finalizado** en ML (o falta) y en ML hay un aviso
 - Si hay uno con el nombre pero otro color (por ejemplo "Blanco" en vez de "Blanco Hueso"), te lo avisa en "Para revisar" y no lo toca.
 - Un aviso ya vinculado a otro producto o color no se vuelve a vincular.
 
+## Sacar de la lista un aviso finalizado (✕)
+
+Un aviso finalizado o borrado en ML, cuyo color/tamaño sigue en la web, queda en la lista como **Finalizado** con el botón **Publicar de nuevo**. Si no lo querés ver ni volver a publicarlo, tocá **✕ Sacar** (en el producto con varios finalizados hay además **✕ Sacar los N finalizados**).
+
+- No toca nada en Mercado Libre (ese aviso ya estaba cerrado) y **no se borra de la base**: queda "oculto", plegado en "N ocultos" al final de los avisos del producto, y la sincronización no lo vuelve a publicar ni a avisar. Si lo borrara, la próxima sincronización volvería a crear el aviso de ese color.
+- Para recuperarlo: abrí "N ocultos" → **Volver a mostrar**. Vuelve a aparecer como Finalizado, con **Publicar de nuevo**.
+- Solo se pueden sacar los finalizados. Un aviso activo no tiene ✕ (sacarlo de la lista lo dejaría vivo en ML sin que la web lo controle).
+- Si más adelante sacás ese color o tamaño de la web, la fila oculta se limpia sola.
+- Requiere correr el SQL nuevo (sección 4c de la migración: una línea). Mientras no lo corras, la ✕ no aparece.
+
 ## Cómo se arman los avisos
 
 - **Un aviso por tamaño**, con los colores como variantes.
@@ -102,6 +112,7 @@ Si un aviso de la web quedó **finalizado** en ML (o falta) y en ML hay un aviso
 - **"Falta configurar …":** falta esa variable en Netlify, o el deploy todavía no terminó.
 - **"Se venció la conexión":** tocá Reconectar.
 - **"Mercado Libre no pudo sugerir una categoría para …":** ML adivina la categoría por el nombre del producto. Si no la encuentra, el panel prueba además con la palabra que usa ML (por ejemplo "portafotos" → "portarretratos"). Si igual no, cargá el código a mano en **Opciones → Categoría** (algo como `MLU1234`).
-- **"The attributes [XXX] are required for category MLUnnn" (o cualquier dato de la categoría que no tiene que ver con tu producto):** ML eligió una categoría equivocada (por ejemplo, de electrónica para un comedero a mano). En **Vista previa**, debajo de "Categoría", ML ofrece otras categorías con su código: tocá **Usar esta** en la correcta y se guarda en el producto y se valida de nuevo. Si ninguna sirve, buscá el código con `https://api.mercadolibre.com/sites/MLU/domain_discovery/search?q=lo que vendés` (mirá el `category_id`) y cargalo en **Opciones → Categoría**.
+- **"The attributes [XXX] are required for category MLUnnn":** ML pide un dato que el panel no sabe completar (por ejemplo "Tipo de alimentación" en una categoría de comederos). Aparece en la **Vista previa**, en "Datos obligatorios que faltan", con las opciones que acepta ML: tocá la que corresponda a tu producto y se guarda en el producto (Opciones → Atributos extra) y se valida de nuevo. Si ninguna opción le va a tu producto, probablemente la categoría no es la indicada: mirá las otras que ofrece ML debajo de "Categoría" (cada una con su ruta completa: Perros, Gatos, etc.) y tocá **Usar esta** en la correcta. Si el dato no tiene opciones, cargalo a mano en **Opciones → Atributos extra**, una línea por dato: `ID = valor`.
+- **Categoría equivocada:** en la Vista previa, debajo de "Categoría", ML ofrece otras con su ruta completa; tocá **Usar esta** en la correcta. Si ninguna sirve, buscá el código con `https://api.mercadolibre.com/sites/MLU/domain_discovery/search?q=lo que vendés` (mirá el `category_id`) y cargalo en **Opciones → Categoría**.
 - **Error al publicar por envíos:** revisá que **Mercado Envíos** esté activo en tu cuenta de vendedor.
 - **Borraste o finalizaste un aviso en ML:** la próxima sincronización lo detecta sola. Si ese color/tamaño ya no está en la web, desaparece de la lista. Si todavía está en la web, queda como **"Finalizado"** (gris, no es un error) con el botón **Publicar de nuevo**, que crea uno nuevo. No se vuelve a crear solo, para no pisar lo que hiciste en ML; si no lo querés en ML, sacá ese color/tamaño de la web.
