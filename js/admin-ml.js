@@ -383,13 +383,20 @@
   }
 
   // Separa los avisos vigentes de los "retirados" (color/tamaño que ya no está en la web).
+  // ¿La base ya tiene la columna "oculto" (SQL 4c)? Sin ella no se ofrece la ✕.
+  const hasHideCol = () => pubs.some((x) => "oculto" in x);
+
   function splitPubs(p) {
-    const list = pubsOf(p.id).sort((a, b) => ((a.tamano || "") + (a.color || "")).localeCompare((b.tamano || "") + (b.color || "")));
+    const all = pubsOf(p.id).sort((a, b) => ((a.tamano || "") + (a.color || "")).localeCompare((b.tamano || "") + (b.color || "")));
+    // Los que sacaste de la lista (✕) van aparte, plegados.
+    const hidden = all.filter((x) => x.oculto === true);
+    const list = all.filter((x) => x.oculto !== true);
     const wanted = wantedKeys(p, list);
-    if (!wanted.size) return { current: list, retired: [] }; // producto sin precio: no se toca nada
+    if (!wanted.size) return { current: list, retired: [], hidden }; // producto sin precio: no se toca nada
     return {
       current: list.filter((x) => wanted.has(keyOf(x.tamano, x.color))),
       retired: list.filter((x) => !wanted.has(keyOf(x.tamano, x.color))),
+      hidden,
     };
   }
 
@@ -416,7 +423,23 @@
       '<div class="ml-note">Lo finalizaste o borraste en Mercado Libre; ese aviso no se puede reactivar. ' +
       'Si ese color/tamaño sigue en la web, podés publicarlo de nuevo.</div>' +
       '<button type="button" class="btn-secondary btn-small" style="margin-top:4px" data-ml="relist" data-pub="' + esc(x.id) + '">Publicar de nuevo</button>' +
+      (hasHideCol()
+        ? ' <button type="button" class="btn-secondary btn-small ml-x" style="margin-top:4px" data-ml="hide" data-pub="' + esc(x.id) +
+          '" title="Sacar de la lista. No se vuelve a publicar solo (lo podés recuperar en \'ocultos\').">✕ Sacar</button>'
+        : "") +
       "</div>"
+    );
+  }
+
+  // Avisos que sacaste de la lista con la ✕: siguen guardados (para que no se vuelvan a publicar solos).
+  function hiddenHtml(rows) {
+    const n = rows.length;
+    return (
+      '<div class="ml-pub ml-retired ml-hidden"><details><summary>' + n + " oculto" + (n > 1 ? "s" : "") + "</summary>" +
+      '<div class="ml-note">Estaban finalizados en Mercado Libre y los sacaste de la lista: no se vuelven a publicar solos.</div>' +
+      rows.map((x) => pubRowHtml(x).replace(/<\/div>$/, "") +
+        '<button type="button" class="btn-secondary btn-small" style="margin-top:2px" data-ml="unhide" data-pub="' + esc(x.id) + '">Volver a mostrar</button></div>').join("") +
+      "</details></div>"
     );
   }
 
@@ -434,8 +457,12 @@
 
   function renderPubs(p) {
     if (!pubsOf(p.id).length) return '<span class="muted">Sin publicar</span>';
-    const { current, retired } = splitPubs(p);
-    return current.map(currentRowHtml).join("") + (retired.length ? retiredHtml(retired) : "");
+    const { current, retired, hidden } = splitPubs(p);
+    const closed = current.filter((x) => (x.estado || "active") === "closed");
+    const bulk = hasHideCol() && closed.length > 1
+      ? '<div><button type="button" class="btn-secondary btn-small ml-x" style="margin:4px 0" data-ml="hideall" title="Sacar de la lista todos los finalizados de este producto">✕ Sacar los ' + closed.length + " finalizados</button></div>"
+      : "";
+    return bulk + current.map(currentRowHtml).join("") + (retired.length ? retiredHtml(retired) : "") + (hidden.length ? hiddenHtml(hidden) : "");
   }
 
   // Cuánto te queda por venta, comparado con el precio de la web (el peor tamaño del producto).
@@ -535,7 +562,7 @@
     return (
       '<p class="muted" style="font-size:12px;margin-bottom:4px">¿No es esa? Mercado Libre también sugiere estas. Tocá "Usar esta" y se vuelve a validar:</p><ul style="margin-bottom:10px">' +
       alt.map((x) =>
-        "<li>" + esc(x.nombre) + ' <span class="muted">(' + esc(x.id) + ')</span> <button type="button" class="btn-secondary btn-small" data-ml="usecat" data-cat="' + esc(x.id) + '">Usar esta</button></li>'
+        "<li>" + esc(x.ruta || x.nombre) + ' <span class="muted">(' + esc(x.id) + ')</span> <button type="button" class="btn-secondary btn-small" data-ml="usecat" data-cat="' + esc(x.id) + '">Usar esta</button></li>'
       ).join("") + "</ul>"
     );
   }
@@ -555,8 +582,14 @@
       .join("");
     const faltan = pv.faltan.length
       ? "<h4>Datos obligatorios que faltan</h4><ul>" +
-        pv.faltan.map((f) => "<li><strong>" + esc(f.nombre) + "</strong> (" + esc(f.id) + ")" + (f.valores.length ? ' <span class="muted">— por ejemplo: ' + f.valores.map(esc).join(", ") + "</span>" : "") + "</li>").join("") +
-        '</ul><p class="muted" style="font-size:12px">Cargalos en "Opciones" → Atributos extra, una línea por dato: <code>' + esc(pv.faltan[0].id) + " = valor</code>.</p>"
+        pv.faltan.map((f) =>
+          "<li><strong>" + esc(f.nombre) + "</strong> (" + esc(f.id) + ")" + (f.pedido_por_ml ? ' <span class="muted">— lo pide ML al validar</span>' : "") +
+          (f.valores.length && productoTieneAtributos(id)
+            ? '<div class="ml-actions" style="margin:4px 0 2px"><span class="muted" style="font-size:12px;align-self:center">Elegí uno:</span> ' +
+              f.valores.map((v) => '<button type="button" class="btn-secondary btn-small" data-ml="useattr" data-attr="' + esc(f.id) + '" data-val="' + esc(v) + '">' + esc(v) + "</button>").join(" ") + "</div>"
+            : (f.valores.length ? ' <span class="muted">— por ejemplo: ' + f.valores.map(esc).join(", ") + "</span>" : "")) +
+          "</li>").join("") +
+        '</ul><p class="muted" style="font-size:12px">Al elegir uno se guarda en el producto (Opciones → Atributos extra: <code>' + esc(pv.faltan[0].id) + " = valor</code>) y se vuelve a validar. Si el dato no tiene opciones, cargalo ahí a mano.</p>"
       : "";
     const val = pv.validacion
       ? pv.validacion.ok
@@ -683,6 +716,33 @@
     (m2 || msg).textContent = pubsOf(id).length
       ? "Guardado. Tocá Sincronizar para mandar el precio y la descripción nuevos a ML."
       : "Guardado. Probá la vista previa.";
+  }
+
+  const productoTieneAtributos = (id) => {
+    const p = productos.find((x) => x.id === id);
+    return !!p && "ml_atributos" in p;
+  };
+
+  // Guarda en "Atributos extra" del producto el dato elegido en la vista previa y la vuelve a validar.
+  async function useAttr(id, attrId, valueName) {
+    const p = productos.find((x) => x.id === id);
+    attrId = String(attrId || "").trim().toUpperCase();
+    valueName = String(valueName || "").trim();
+    if (!p || !/^[A-Z0-9_]+$/.test(attrId) || !valueName) return;
+    const list = (Array.isArray(p.ml_atributos) ? p.ml_atributos : []).filter((x) => x && String(x.id).toUpperCase() !== attrId);
+    list.push({ id: attrId, value_name: valueName });
+    const { error } = await stratoSb.from("productos").update({ ml_atributos: list }).eq("id", id);
+    const prog = $("ml-progress");
+    if (error) {
+      prog.className = "ml-progress ml-err";
+      prog.textContent = "No se pudo guardar el dato: " + error.message;
+      return;
+    }
+    p.ml_atributos = list;
+    prog.className = "ml-progress ml-ok";
+    prog.textContent = p.nombre + ": " + attrId + " = " + valueName + " guardado. Estoy armando la vista previa de nuevo…";
+    openRows.delete(id);
+    doPreview(id);
   }
 
   // Guarda la categoría elegida en la vista previa y la vuelve a validar.
@@ -878,6 +938,24 @@
     await doRun(pub.producto_id, "sync", btn);
   }
 
+  // ✕: saca de la lista avisos finalizados (o los vuelve a mostrar). No toca nada en Mercado Libre.
+  async function hideRows(ids, oculto) {
+    if (busy || !ids.length) return;
+    const prog = $("ml-progress");
+    try {
+      const r = await api("hide", { publicacion_ids: ids, oculto });
+      await reloadPubs();
+      renderTable();
+      prog.className = "ml-progress ml-ok";
+      prog.textContent = oculto
+        ? (r.cambiados || 0) + " aviso" + (r.cambiados === 1 ? "" : "s") + " sacado" + (r.cambiados === 1 ? "" : "s") + ' de la lista; no se vuelven a publicar solos. Para recuperarlos: "ocultos" → "Volver a mostrar".'
+        : "Se volvió a mostrar" + (ids.length > 1 ? "n " + ids.length + " avisos." : " el aviso.");
+    } catch (e) {
+      prog.className = "ml-progress ml-err";
+      prog.textContent = e.message;
+    }
+  }
+
   // Estilos de lo nuevo (avisos retirados / finalizados), sin tocar admin.html.
   function injectStyles() {
     if (document.getElementById("ml-extra-style")) return;
@@ -888,7 +966,8 @@
       "#ml-tbody .ml-note{color:#6b6b6b;font-size:12px;margin-top:2px}" +
       "#ml-tbody .ml-retired{margin-top:6px;padding:6px 8px;border:1px dashed var(--border);border-radius:3px;background:rgba(0,0,0,.02)}" +
       "#ml-tbody .ml-retired summary{cursor:pointer;color:#6b6b6b}" +
-      "#ml-tbody .ml-retired .ml-badge{background:rgba(0,0,0,.07);color:#6b6b6b}";
+      "#ml-tbody .ml-retired .ml-badge{background:rgba(0,0,0,.07);color:#6b6b6b}" +
+      "#ml-tbody .ml-x{color:#6b6b6b}";
     document.head.appendChild(st);
   }
 
@@ -906,6 +985,19 @@
       if (!btn) return;
       const action = btn.getAttribute("data-ml");
       if (action === "relist") return relist(btn.getAttribute("data-pub"), btn);
+      if (action === "hide") return hideRows([btn.getAttribute("data-pub")], true);
+      if (action === "unhide") return hideRows([btn.getAttribute("data-pub")], false);
+      if (action === "hideall") {
+        const tr0 = btn.closest("tr[data-id]");
+        const pid = tr0 && tr0.getAttribute("data-id");
+        const prod = productos.find((x) => x.id === pid);
+        const ids = prod ? splitPubs(prod).current.filter((x) => (x.estado || "active") === "closed").map((x) => x.id) : [];
+        return hideRows(ids, true);
+      }
+      if (action === "useattr") {
+        const row = btn.closest("tr").previousElementSibling;
+        return useAttr(row && row.getAttribute("data-id"), btn.getAttribute("data-attr"), btn.getAttribute("data-val"));
+      }
       if (action === "usecat") {
         const row = btn.closest("tr").previousElementSibling;
         return useCat(row && row.getAttribute("data-id"), btn.getAttribute("data-cat"));
