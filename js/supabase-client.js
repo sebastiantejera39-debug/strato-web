@@ -135,6 +135,8 @@ async function stratoLoadLiveCatalog() {
 /**
  * Guarda el pedido cuando se confirma el checkout. Es "best effort": si falla,
  * no interrumpe el flujo de WhatsApp / Mercado Pago — el pedido igual llega por esos medios.
+ * Devuelve { ok, id } o { ok:false, code, detail }: el checkout por transferencia usa ese resultado para
+ * dejar una marca en el mensaje de WhatsApp cuando el pedido NO quedó registrado en el panel.
  *
  * Ya NO se inserta directo en Supabase desde el navegador (así cualquiera podía cargar pedidos
  * falsos): se manda a la función /api/crear-pedido, que recalcula los precios con los datos reales
@@ -142,23 +144,36 @@ async function stratoLoadLiveCatalog() {
  * nota se pidió y los datos de contacto: lo demás (precios, subtotal, estado) se decide allá.
  */
 async function stratoInsertPedido(pedido) {
+  const body = {
+    cart: (pedido.items || []).map((i) => ({
+      id: i.producto_id,
+      size: i.tamano || null,
+      color: i.color || null,
+      qty: i.qty,
+      nota: i.nota || null,
+    })),
+    cliente_nombre: pedido.cliente_nombre,
+    cliente_telefono: pedido.cliente_telefono,
+    cliente_email: pedido.cliente_email || null,
+    entrega: pedido.entrega,
+    direccion: pedido.direccion || null,
+    notas: pedido.notas || null,
+    pago: pedido.pago || null,
+  };
+  // Un solo reintento, y solo si el fallo pudo ser pasajero (sin conexión o error del servidor):
+  // un dato inválido (4xx) no se arregla repitiéndolo.
+  let ultimo = { ok: false, reason: "sin intentos" };
+  for (let intento = 0; intento < 2; intento++) {
+    if (intento > 0) await new Promise((r) => setTimeout(r, 800));
+    ultimo = await stratoEnviarPedido(body);
+    if (ultimo.ok || !ultimo.retry) break;
+  }
+  return ultimo;
+}
+
+// Un intento de guardado. Devuelve { ok, id } o { ok:false, reason, code, detail, retry }.
+async function stratoEnviarPedido(body) {
   try {
-    const body = {
-      cart: (pedido.items || []).map((i) => ({
-        id: i.producto_id,
-        size: i.tamano || null,
-        color: i.color || null,
-        qty: i.qty,
-        nota: i.nota || null,
-      })),
-      cliente_nombre: pedido.cliente_nombre,
-      cliente_telefono: pedido.cliente_telefono,
-      cliente_email: pedido.cliente_email || null,
-      entrega: pedido.entrega,
-      direccion: pedido.direccion || null,
-      notas: pedido.notas || null,
-      pago: pedido.pago || null,
-    };
     const resp = await fetch("/api/crear-pedido", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -166,14 +181,16 @@ async function stratoInsertPedido(pedido) {
     });
     const data = await resp.json().catch(() => null);
     if (!resp.ok || !data || !data.ok) {
+      const code = data && typeof data.code === "string" ? data.code : "";
+      const detail = data && typeof data.detail === "string" ? data.detail : "";
       const reason = (data && (data.error || data.code)) || "error " + resp.status;
-      console.warn("Strato: no se pudo guardar el pedido.", reason);
-      return { ok: false, reason: reason };
+      console.warn("Strato: no se pudo guardar el pedido.", resp.status, code, detail, reason);
+      return { ok: false, reason: reason, code: code || "HTTP " + resp.status, detail: detail, retry: resp.status >= 500 && code !== "NOT_CONFIGURED" };
     }
     return { ok: true, id: data.id || null };
   } catch (e) {
     console.warn("Strato: error guardando el pedido.", e);
-    return { ok: false, reason: String(e) };
+    return { ok: false, reason: String(e), code: "SIN_CONEXION", detail: "", retry: true };
   }
 }
 
