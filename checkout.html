@@ -400,11 +400,18 @@
     msg += "\nPago: Transferencia Bancaria (Cuenta Mercado Pago)";
     if (datosComunes.notas) msg += "\nNotas: " + datosComunes.notas;
 
+    // El pedido se guarda para que aparezca en el panel. Si no se pudo (ni con el reintento), el
+    // WhatsApp igual sale —el cliente no pierde nada—, pero con una marca para que se cargue a mano.
+    let guardado = { ok: false, code: "SIN_GUARDADO" };
     if (typeof stratoInsertPedido === "function") {
-      await stratoInsertPedido(Object.assign({}, datosComunes, {
+      guardado = await stratoInsertPedido(Object.assign({}, datosComunes, {
         pago: "Transferencia bancaria",
         items: pedidoItems(lines),
       }));
+    }
+    if (!guardado || !guardado.ok) {
+      const motivo = guardado ? [guardado.code, guardado.detail].filter(Boolean).join(" · ") : "";
+      msg += "\n\n[Pedido sin registrar en el sistema" + (motivo ? ": " + motivo.slice(0, 80) : "") + "]";
     }
 
     window.open(stratoWhatsAppLink(msg), "_blank");
