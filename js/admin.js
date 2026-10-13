@@ -20,7 +20,9 @@
   let categoriasCache = [];
   let productosCache = [];
   let pedidosCache = [];
-  let gastosCache = [];
+  let gastosCache = []; // lista de la pestaña Gastos (con su propio filtro de fechas)
+  let gastosAll = []; // todos los gastos, para el dashboard
+  let pedidosSucio = false; // hay datos nuevos que la lista de Pedidos todavía no dibujó
   let maquinasCache = [];
   let cotizacionesCache = [];
   let filamentosCache = [];
@@ -30,6 +32,11 @@
   let editingFilamentoId = null;
   let editingEscalonId = null;
   let v7TablasOk = true; // false si no se pudieron leer las tablas de la migración v7 (probablemente no se corrió)
+  // Costo de fabricación de cada producto/tamaño (tabla PRIVADA producto_costos): clave "producto_id|tamaño" → costo unitario.
+  let costosMap = new Map();
+  let costosEstado = { ok: false, intento: false, falta: false, error: "" };
+  let prodCostoBase = ""; // costo del producto en edición cuando no tiene tamaños (texto tal cual se tipea)
+  let ventaOrigen = null; // si la venta que se está cargando viene de una cotización: { id, nombre, sugerido, costo }
 
   let editingProductId = null;
   let editingCategoriaId = null;
@@ -42,13 +49,57 @@
   let catImagenPortada = null; // url de la foto de portada de la categoría en edición, o null
 
   /* ---------- Helpers ---------- */
-  function todayStr() {
-    const d = new Date();
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  /* Fechas en horario de Uruguay. Uruguay es UTC-3 todo el año (sin horario de verano): los días del
+     negocio ("hoy", "este mes", a qué día pertenece un pedido) se calculan SIEMPRE en ese huso, sin
+     importar la zona horaria de la compu o el celular desde donde se abra el panel. */
+  const TZ_UY = "America/Montevideo";
+  let dtfUY = null;
+  try {
+    dtfUY = new Intl.DateTimeFormat("en-CA", { timeZone: TZ_UY, year: "numeric", month: "2-digit", day: "2-digit" });
+  } catch (e) {
+    dtfUY = null;
   }
-  function monthStartStr() {
-    const d = new Date();
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-01";
+  function diaUY(input) {
+    const d = input instanceof Date ? input : new Date(input);
+    if (isNaN(d.getTime())) return "";
+    if (dtfUY) {
+      const o = {};
+      dtfUY.formatToParts(d).forEach((x) => { o[x.type] = x.value; });
+      return o.year + "-" + o.month + "-" + o.day;
+    }
+    return new Date(d.getTime() - 3 * 3600e3).toISOString().slice(0, 10); // respaldo: UTC-3 fijo
+  }
+  function todayStr() {
+    return diaUY(new Date());
+  }
+  function monthStartStr(day) {
+    return (day || todayStr()).slice(0, 8) + "01";
+  }
+  function monthEndStr(day) {
+    const y = Number(day.slice(0, 4)), m = Number(day.slice(5, 7));
+    return day.slice(0, 8) + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0");
+  }
+  function prevMonthStart(day) {
+    const y = Number(day.slice(0, 4)), m = Number(day.slice(5, 7));
+    return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 10);
+  }
+  function addDays(str, n) {
+    const d = new Date(str + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+  function diffDays(a, b) {
+    return Math.round((new Date(b + "T12:00:00Z") - new Date(a + "T12:00:00Z")) / 864e5);
+  }
+  function fmtDM(str) {
+    return str.slice(8, 10) + "/" + str.slice(5, 7);
+  }
+  function fmtDMY(str) {
+    return str.slice(8, 10) + "/" + str.slice(5, 7) + "/" + str.slice(0, 4);
+  }
+  function fmtFecha(iso) {
+    const d = iso ? diaUY(iso) : "";
+    return d ? fmtDMY(d) : "—";
   }
   function fmtMoney(n) {
     if (n === null || n === undefined || isNaN(n)) return "—";
@@ -59,6 +110,20 @@
     const d = document.createElement("div");
     d.textContent = s ?? "";
     return d.innerHTML;
+  }
+  // Para valores dentro de atributos HTML (escHtml no escapa las comillas).
+  function escAttr(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+  // Número seguro: lo que no sea un número finito cuenta como 0 (nunca se imprime tal cual en el HTML).
+  function num(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
   }
   function numVal(id) {
     const v = Number(document.getElementById(id).value);
@@ -100,17 +165,39 @@
     document.getElementById("app").style.display = "none";
   }
 
+  let appIniciada = false;
+
   async function showApp(user) {
     document.getElementById("login-screen").style.display = "none";
     document.getElementById("app").style.display = "block";
     document.getElementById("user-email").textContent = user.email;
+    if (appIniciada) return;
+    appIniciada = true;
 
+    // Primero se preparan las fechas y el dashboard (período por defecto: este mes), recién después se
+    // cargan los datos y se dibuja todo: así nunca se pinta un número calculado con fechas todavía vacías.
+    const hoy = todayStr();
+    document.getElementById("gastos-desde").value = monthStartStr();
+    document.getElementById("gastos-hasta").value = hoy;
+    document.getElementById("gasto-fecha").value = hoy;
+    document.getElementById("venta-fecha").value = hoy;
+    iniciarDashboard();
+    dash.loading = true;
+    renderDashboard(); // muestra "Cargando datos…" y guiones, no ceros
+
+    // Si una carga falla, las demás siguen: el panel no se queda a medias.
+    const seguro = (fn) => fn().catch((e) => { console.error(e); return false; });
     await Promise.all([
-      loadCategorias(), loadProductos(), loadPedidos(), loadMaquinas(), loadCotizaciones(), loadFilamentos(), loadEscalones(),
+      seguro(loadCategorias), seguro(loadProductos), seguro(loadPedidos), seguro(loadGastosTodos),
+      seguro(loadMaquinas), seguro(loadCotizaciones), seguro(loadFilamentos), seguro(loadEscalones),
+      seguro(loadCostos),
     ]);
+    dash.loading = false;
+    if (pedidosEstado.ok && gastosEstado.ok) dash.lastOkAt = Date.now();
     fillCategoriaSelects();
     renderDashboard();
     renderPedidos();
+    actualizarAvisosPedidos();
     renderProductos();
     renderCategorias();
     renderCatImgManager(false);
@@ -125,14 +212,9 @@
     renderCalcFilRows();
     renderResultados();
 
-    const hoy = todayStr();
-    document.getElementById("gastos-desde").value = monthStartStr();
-    document.getElementById("gastos-hasta").value = hoy;
-    document.getElementById("dash-desde").value = monthStartStr();
-    document.getElementById("dash-hasta").value = hoy;
-    document.getElementById("gasto-fecha").value = hoy;
-    await loadGastos(monthStartStr(), hoy);
+    await seguro(() => loadGastos(monthStartStr(), hoy));
     renderGastos();
+    iniciarAutoRefresh();
   }
 
   document.getElementById("login-form").addEventListener("submit", async (e) => {
@@ -161,12 +243,37 @@
   });
 
   /* ============ TABS ============ */
-  document.querySelectorAll("nav.tabs button").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.remove("active"));
-      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-      btn.classList.add("active");
-      document.getElementById(btn.dataset.panel).classList.add("active");
+  const tabBtns = Array.from(document.querySelectorAll('nav.tabs [role="tab"]'));
+
+  function activarPanel(btn, enfocar) {
+    tabBtns.forEach((b) => {
+      const on = b === btn;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;
+    });
+    document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === btn.dataset.panel));
+    if (enfocar) btn.focus();
+    if (btn.dataset.panel === "panel-pedidos" && pedidosSucio) {
+      pedidosSucio = false;
+      renderPedidos();
+    }
+    // El historial marca las cotizaciones ya cargadas como pedido: se refresca al entrar (un pedido pudo cancelarse o llegar uno nuevo).
+    if (btn.dataset.panel === "panel-calculadora") renderCotizaciones();
+  }
+
+  tabBtns.forEach((btn, i) => {
+    btn.addEventListener("click", () => activarPanel(btn, false));
+    // Teclado: flechas, inicio y fin se mueven entre pestañas (patrón estándar de tablist)
+    btn.addEventListener("keydown", (e) => {
+      let j = null;
+      if (e.key === "ArrowRight") j = (i + 1) % tabBtns.length;
+      else if (e.key === "ArrowLeft") j = (i - 1 + tabBtns.length) % tabBtns.length;
+      else if (e.key === "Home") j = 0;
+      else if (e.key === "End") j = tabBtns.length - 1;
+      if (j === null) return;
+      e.preventDefault();
+      activarPanel(tabBtns[j], true);
     });
   });
 
@@ -197,17 +304,150 @@
       .join(" · ");
   }
 
-  async function loadPedidos() {
-    const { data, error } = await stratoSb.from("pedidos").select("*").order("created_at", { ascending: false });
-    if (!error) pedidosCache = data || [];
+  /* Supabase devuelve como máximo 1000 filas por consulta: se pide de a páginas hasta traer todo. */
+  const PAGINA = 1000;
+  const MAX_FILAS = 20000;
+  async function traerTodo(armarConsulta) {
+    const filas = [];
+    for (let desde = 0; desde < MAX_FILAS; desde += PAGINA) {
+      let res;
+      try {
+        res = await armarConsulta().range(desde, desde + PAGINA - 1);
+      } catch (e) {
+        return { data: null, error: { message: e && e.message ? e.message : "error de conexión" }, truncado: false };
+      }
+      const { data, error } = res;
+      if (error) return { data: null, error: error, truncado: false };
+      const tanda = data || [];
+      for (let k = 0; k < tanda.length; k++) filas.push(tanda[k]);
+      if (tanda.length < PAGINA) return { data: filas, error: null, truncado: false };
+    }
+    return { data: filas, error: null, truncado: true };
   }
 
+  const CANALES = ["web", "instagram", "whatsapp", "mercadolibre", "local", "otro"];
+  const CANAL_LABEL = { web: "Web", instagram: "Instagram", whatsapp: "WhatsApp", mercadolibre: "Mercado Libre", local: "En persona", otro: "Otro" };
+
+  // Datos derivados que se calculan una sola vez al cargar: el día en Uruguay y un canal siempre válido.
+  function prepPedido(p) {
+    p._dia = diaUY(p.created_at);
+    p.canal = CANALES.includes(p.canal) ? p.canal : p.canal ? "otro" : "web";
+    if (!Array.isArray(p.items)) p.items = [];
+    return p;
+  }
+
+  let pedidosEstado = { ok: false, error: "", truncado: false, intento: false };
+  let gastosEstado = { ok: false, error: "", truncado: false, intento: false };
+
+  // Si falla, se conservan los datos anteriores (con un aviso) en vez de vaciar la pantalla.
+  async function loadPedidos() {
+    const r = await traerTodo(() =>
+      stratoSb.from("pedidos").select("*").order("created_at", { ascending: false }).order("id", { ascending: false })
+    );
+    if (r.error) {
+      pedidosEstado = { ok: false, error: r.error.message || "error de conexión", truncado: false, intento: true, hayDatos: pedidosEstado.ok || pedidosEstado.hayDatos };
+      return false;
+    }
+    pedidosCache = (r.data || []).map(prepPedido);
+    pedidosEstado = { ok: true, error: "", truncado: r.truncado, intento: true, hayDatos: true };
+    return true;
+  }
+
+  // Los gastos del dashboard: TODOS, sin depender del filtro de fechas de la pestaña Gastos.
+  async function loadGastosTodos() {
+    const r = await traerTodo(() =>
+      stratoSb.from("gastos").select("*").order("fecha", { ascending: false }).order("id", { ascending: false })
+    );
+    if (r.error) {
+      gastosEstado = { ok: false, error: r.error.message || "error de conexión", truncado: false, intento: true, hayDatos: gastosEstado.ok || gastosEstado.hayDatos };
+      return false;
+    }
+    gastosAll = (r.data || []).map((g) => { g._f = String(g.fecha || "").slice(0, 10); return g; });
+    gastosEstado = { ok: true, error: "", truncado: r.truncado, intento: true, hayDatos: true };
+    return true;
+  }
+
+  // La lista de la pestaña Gastos (con su propio filtro de fechas)
   async function loadGastos(desde, hasta) {
     let q = stratoSb.from("gastos").select("*").order("fecha", { ascending: false });
     if (desde) q = q.gte("fecha", desde);
     if (hasta) q = q.lte("fecha", hasta);
     const { data, error } = await q;
     if (!error) gastosCache = data || [];
+  }
+
+  /* ============ COSTOS DE FABRICACIÓN (privados) ============
+     Cada producto (y cada tamaño) puede tener un costo por unidad. Vive en la tabla privada `producto_costos`
+     (nunca en `productos`, que lee cualquiera que abra la tienda). Cuando se vende, el costo vigente queda
+     copiado en el ítem del pedido (`items[].costo`); los pedidos viejos, que no lo tienen, usan el costo actual. */
+  const CAT_EN_COSTO = ["filamento", "electricidad"]; // ya están dentro del costo de las piezas: no se restan dos veces
+  const claveCosto = (productoId, tamano) => String(productoId) + "|" + String(tamano || "");
+  const COSTO_MAX = 10000000;
+
+  async function loadCostos() {
+    const r = await traerTodo(() =>
+      stratoSb.from("producto_costos").select("*").order("producto_id", { ascending: true }).order("tamano", { ascending: true })
+    );
+    if (r.error) {
+      const msg = String(r.error.message || "") + " " + String(r.error.code || "");
+      costosEstado = {
+        ok: false, intento: true, error: r.error.message || "error de conexión",
+        falta: /producto_costos|schema cache|42P01|PGRST205|does not exist/i.test(msg),
+      };
+      return false;
+    }
+    costosMap = new Map();
+    (r.data || []).forEach((c) => {
+      const v = Number(c.costo);
+      if (Number.isFinite(v) && v >= 0) costosMap.set(claveCosto(c.producto_id, c.tamano), v);
+    });
+    costosEstado = { ok: true, intento: true, falta: false, error: "" };
+    return true;
+  }
+
+  const redondear2 = (n) => Math.round(Number(n) * 100) / 100;
+
+  // Costo real de fabricar la pieza de una cotización: costo base + accesorio. El accesorio se cobra a costo
+  // (sin margen), pero igual es plata que sale, así que cuenta para la ganancia neta.
+  function costoDeCotizacion(c) {
+    const r = c && c.resultados;
+    if (!r || r.costo_base === null || r.costo_base === undefined || r.costo_base === "" || !Number.isFinite(Number(r.costo_base))) return null;
+    const acc = Number(c.inputs && c.inputs.costo_accesorio);
+    return redondear2(Number(r.costo_base) + (Number.isFinite(acc) && acc > 0 ? acc : 0));
+  }
+  function accesorioDeCotizacion(c) {
+    const acc = Number(c && c.inputs && c.inputs.costo_accesorio);
+    return Number.isFinite(acc) && acc > 0 ? redondear2(acc) : 0;
+  }
+
+  // Costo unitario de un ítem de pedido: el que quedó guardado al vender, si no el costo actual del producto, si no desconocido.
+  function costoItem(it) {
+    if (it && it.costo !== null && it.costo !== undefined && it.costo !== "") {
+      const v = Number(it.costo);
+      if (Number.isFinite(v) && v >= 0) return { v: v, src: "guardado" };
+    }
+    if (it && it.producto_id) {
+      const k = claveCosto(it.producto_id, it.tamano);
+      if (costosMap.has(k)) return { v: costosMap.get(k), src: "estimado" };
+      const k0 = claveCosto(it.producto_id, "");
+      if (costosMap.has(k0)) return { v: costosMap.get(k0), src: "estimado" };
+    }
+    return { v: null, src: null };
+  }
+
+  // Costo de un pedido entero. Los ítems "a cotizar" (sin precio) no suman ni al subtotal ni al costo.
+  function costoPedido(p) {
+    let costo = 0, faltan = 0, conPrecio = 0, estimado = false;
+    (p.items || []).forEach((it) => {
+      if (!it || it.precio === null || it.precio === undefined) return;
+      conPrecio++;
+      const c = costoItem(it);
+      if (c.v === null) { faltan++; return; }
+      costo += c.v * num(it.qty);
+      if (c.src === "estimado") estimado = true;
+    });
+    if (!conPrecio && num(p.subtotal) > 0) faltan = 1; // hay plata pero ningún producto identificable: costo desconocido
+    return { costo: costo, faltan: faltan, completo: faltan === 0 && conPrecio > 0, estimado: estimado };
   }
 
   function fillCategoriaSelects() {
@@ -249,133 +489,790 @@
   };
 
   /* ============ DASHBOARD ============ */
-  document.getElementById("dash-filtrar").addEventListener("click", renderDashboard);
+  const TITLE_BASE = document.title;
+  const PER_KEY = "strato-dash-periodo";
+  const PERIODOS = ["hoy", "7d", "mes", "mesant", "todo", "custom"];
+  const CAT_LABEL = { filamento: "Filamento", electricidad: "Electricidad", envios: "Envíos", herramientas: "Herramientas", marketing: "Marketing", otro: "Otro" };
+  const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  const MAX_NUEVOS = 15;
+  const dash = { per: "mes", desde: "", hasta: "", loading: false, visibleLoading: false, lastOkAt: 0, chart: null };
 
-  function renderDashboard() {
-    const desde = document.getElementById("dash-desde").value;
-    const hasta = document.getElementById("dash-hasta").value;
+  const elDesde = document.getElementById("dash-desde");
+  const elHasta = document.getElementById("dash-hasta");
 
-    const enRango = pedidosCache.filter((p) => {
-      const f = p.created_at ? p.created_at.slice(0, 10) : "";
-      return (!desde || f >= desde) && (!hasta || f <= hasta);
-    });
-    const ingresos = enRango.filter((p) => p.estado !== "cancelado").reduce((s, p) => s + Number(p.subtotal || 0), 0);
+  function iniciarDashboard() {
+    try {
+      const g = localStorage.getItem(PER_KEY);
+      if (g && PERIODOS.includes(g) && g !== "custom") dash.per = g;
+    } catch (e) { /* sin almacenamiento: queda "Este mes" */ }
+    aplicarBotonesPeriodo();
+    const box = document.getElementById("dash-chart");
+    if (window.ResizeObserver) {
+      let ultimo = 0;
+      new ResizeObserver(() => {
+        const w = Math.round(box.clientWidth);
+        if (Math.abs(w - ultimo) > 8) { ultimo = w; drawChart(); }
+      }).observe(box);
+    } else {
+      window.addEventListener("resize", drawChart);
+    }
+  }
 
-    const gastosEnRango = gastosCache.filter((g) => (!desde || g.fecha >= desde) && (!hasta || g.fecha <= hasta));
-    const totalGastos = gastosEnRango.reduce((s, g) => s + Number(g.monto || 0), 0);
+  function aplicarBotonesPeriodo() {
+    document.querySelectorAll("#dash-seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.per === dash.per ? "true" : "false"));
+    document.getElementById("dash-custom").hidden = dash.per !== "custom";
+  }
 
-    document.getElementById("dash-pedidos-count").textContent = enRango.length;
-    document.getElementById("dash-ingresos").textContent = fmtMoney(ingresos);
-    document.getElementById("dash-gastos").textContent = fmtMoney(totalGastos);
+  function elegirPeriodo(per) {
+    dash.per = per;
+    if (per === "custom") {
+      const hoy = todayStr();
+      if (!dash.desde) dash.desde = monthStartStr(hoy);
+      if (!dash.hasta) dash.hasta = hoy;
+      elDesde.value = dash.desde;
+      elHasta.value = dash.hasta;
+    } else {
+      try { localStorage.setItem(PER_KEY, per); } catch (e) { /* no pasa nada */ }
+    }
+    aplicarBotonesPeriodo();
+    renderDashboard();
+  }
+
+  function aplicarFechasPropias() {
+    dash.desde = elDesde.value;
+    dash.hasta = elHasta.value;
+    renderDashboard();
+  }
+
+  document.getElementById("dash-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-per]");
+    if (b) elegirPeriodo(b.dataset.per);
+  });
+  elDesde.addEventListener("change", aplicarFechasPropias);
+  elHasta.addEventListener("change", aplicarFechasPropias);
+  document.getElementById("dash-aplicar").addEventListener("click", aplicarFechasPropias);
+  document.getElementById("dash-refresh").addEventListener("click", () => refreshDatos({ manual: true }));
+  document.getElementById("dash-venta-btn").addEventListener("click", () => abrirVenta());
+  document.getElementById("dash-status").addEventListener("click", (e) => {
+    if (e.target.closest("[data-act='reintentar']")) refreshDatos({ manual: true });
+  });
+  document.getElementById("dash-atencion").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-estado]");
+    if (b) irAPedidos(b.dataset.estado);
+  });
+  document.getElementById("dash-gn").addEventListener("click", (e) => {
+    if (e.target.closest("[data-act='ir-costos']")) irACostos();
+  });
+  document.getElementById("dash-nuevos-tbody").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ir-pedido]");
+    if (b) irAPedidos("nuevo", b.dataset.irPedido);
+  });
+
+  function minDia() {
+    let m = "";
+    pedidosCache.forEach((p) => { if (p._dia && (!m || p._dia < m)) m = p._dia; });
+    gastosAll.forEach((g) => { if (g._f && (!m || g._f < m)) m = g._f; });
+    return m;
+  }
+
+  // Rango elegido + rango "comparable" anterior (para los porcentajes de cambio).
+  function dashRango(hoy) {
+    let desde, hasta, prev = null, nota = "";
+    const per = dash.per;
+    if (per === "hoy") {
+      desde = hasta = hoy;
+      prev = [addDays(hoy, -1), addDays(hoy, -1)];
+    } else if (per === "7d") {
+      desde = addDays(hoy, -6);
+      hasta = hoy;
+      prev = [addDays(hoy, -13), addDays(hoy, -7)];
+    } else if (per === "mes") {
+      desde = monthStartStr(hoy);
+      hasta = hoy;
+      const ps = prevMonthStart(hoy);
+      const fin = addDays(ps, diffDays(desde, hoy)); // mismo tramo del mes anterior (los primeros N días)
+      const ult = monthEndStr(ps);
+      prev = [ps, fin > ult ? ult : fin];
+    } else if (per === "mesant") {
+      const ps = prevMonthStart(hoy);
+      desde = ps;
+      hasta = monthEndStr(ps);
+      const pps = prevMonthStart(ps);
+      prev = [pps, monthEndStr(pps)];
+    } else if (per === "todo") {
+      desde = minDia() || hoy;
+      hasta = hoy;
+    } else {
+      const ok = /^\d{4}-\d{2}-\d{2}$/;
+      let d = ok.test(dash.desde) ? dash.desde : minDia() || hoy;
+      let h = ok.test(dash.hasta) ? dash.hasta : hoy;
+      if (d > h) {
+        const t = d; d = h; h = t;
+        nota = "Las fechas estaban al revés; mostramos del " + fmtDMY(d) + " al " + fmtDMY(h) + ".";
+      }
+      desde = d;
+      hasta = h;
+      const n = diffDays(d, h) + 1;
+      prev = [addDays(d, -n), addDays(d, -1)];
+    }
+    return { desde: desde, hasta: hasta, prev: prev, nota: nota };
+  }
+
+  function suma(lista, fn) {
+    let s = 0;
+    for (let i = 0; i < lista.length; i++) s += num(fn(lista[i]));
+    return s;
+  }
+
+  // Todos los números de un período, calculados con los MISMOS criterios para el actual y el anterior.
+  function calcPeriodo(a, b) {
+    const ped = pedidosCache.filter((p) => p._dia >= a && p._dia <= b);
+    const ok = ped.filter((p) => p.estado !== "cancelado"); // un pedido cancelado no es ingreso
+    const ingresos = suma(ok, (p) => p.subtotal);
+    const entregados = suma(ok.filter((p) => p.estado === "entregado"), (p) => p.subtotal);
+    const gastos = gastosAll.filter((g) => g._f >= a && g._f <= b);
+    const totalGastos = suma(gastos, (g) => g.monto);
     const saldo = ingresos - totalGastos;
-    const saldoEl = document.getElementById("dash-saldo");
-    saldoEl.textContent = fmtMoney(saldo);
-    saldoEl.className = "dash-total " + (saldo >= 0 ? "positivo" : "negativo");
 
-    const nuevos = pedidosCache.filter((p) => p.estado === "nuevo");
-    const tbody = document.getElementById("dash-nuevos-tbody");
-    document.getElementById("dash-nuevos-empty").style.display = nuevos.length ? "none" : "block";
-    tbody.innerHTML = nuevos
+    // Ganancia neta = ingresos − costo de las piezas vendidas − otros gastos. El filamento y la luz ya van
+    // dentro del costo de las piezas, así que esos dos gastos no se restan de nuevo.
+    let costoPiezas = 0, ingConCosto = 0, pedSinCosto = 0, pedEstimado = 0;
+    ok.forEach((p) => {
+      const c = costoPedido(p);
+      costoPiezas += c.costo;
+      if (c.completo) ingConCosto += num(p.subtotal);
+      else pedSinCosto++;
+      if (c.estimado) pedEstimado++;
+    });
+    const gastosOp = suma(gastos.filter((g) => CAT_EN_COSTO.indexOf(normCat(g.categoria)) < 0), (g) => g.monto);
+    const ganancia = ingresos - costoPiezas - gastosOp;
+    return {
+      ok: ok,
+      cancelados: ped.length - ok.length,
+      ingresos: ingresos,
+      entregados: entregados,
+      gastos: gastos,
+      totalGastos: totalGastos,
+      saldo: saldo,
+      ticket: ok.length ? ingresos / ok.length : 0,
+      margen: ingresos > 0 ? (saldo / ingresos) * 100 : 0,
+      costoPiezas: costoPiezas,
+      gastosOp: gastosOp,
+      gastosEnCosto: totalGastos - gastosOp,
+      ganancia: ganancia,
+      margenNeto: ingresos > 0 ? (ganancia / ingresos) * 100 : 0,
+      pedSinCosto: pedSinCosto,
+      ingSinCosto: ingresos - ingConCosto,
+      pedEstimado: pedEstimado,
+    };
+  }
+
+  function fmtRango(a, b) {
+    return a === b ? fmtDM(a) : fmtDM(a) + " al " + fmtDM(b);
+  }
+
+  function deltaPct(cur, prev, invertido) {
+    if (!prev) {
+      return '<span class="delta flat">' + (cur ? "sin datos en el período anterior" : "sin datos en este ni en el anterior") + "</span>";
+    }
+    const v = ((cur - prev) / Math.abs(prev)) * 100;
+    const r = Math.round(Math.abs(v));
+    if (r < 1) return '<span class="delta flat"><span aria-hidden="true">■</span> casi igual</span> que el anterior';
+    const sube = v > 0;
+    const bueno = invertido ? !sube : sube;
+    return (
+      '<span class="delta ' + (bueno ? "good" : "bad") + '"><span aria-hidden="true">' + (sube ? "▲" : "▼") + "</span> " + r + "%" +
+      '<span class="sr-only">' + (sube ? " más" : " menos") + "</span></span> vs. anterior"
+    );
+  }
+  function deltaMonto(cur, prev) {
+    const d = cur - prev;
+    if (Math.round(d) === 0) return '<span class="delta flat"><span aria-hidden="true">■</span> igual</span> que el anterior';
+    const bueno = d > 0;
+    return (
+      '<span class="delta ' + (bueno ? "good" : "bad") + '"><span aria-hidden="true">' + (d > 0 ? "▲" : "▼") + "</span> " + fmtMoney(Math.abs(d)) +
+      '<span class="sr-only">' + (d > 0 ? " más" : " menos") + "</span></span> vs. anterior"
+    );
+  }
+
+  function kpiHtml(label, val, cls, metas) {
+    return (
+      '<div class="kpi"><div class="label">' + label + '</div><div class="val' + (cls ? " " + cls : "") + '">' + val + "</div>" +
+      metas.filter(Boolean).map((m) => '<div class="meta">' + m + "</div>").join("") + "</div>"
+    );
+  }
+
+  function niceMax(v) {
+    if (!(v > 0)) return 1000;
+    const pot = Math.pow(10, Math.floor(Math.log10(v)));
+    const f = v / pot;
+    const nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 4 ? 4 : f <= 6 ? 6 : f <= 8 ? 8 : 10;
+    return nf * pot;
+  }
+  function fmtEje(v) {
+    if (v === 0) return "0";
+    if (v >= 1000) return String(Math.round((v / 1000) * 10) / 10).replace(".", ",") + "k";
+    return String(Math.round(v));
+  }
+
+  // Barras del gráfico: por día (hasta 45 días), por semana (hasta ~9 meses) o por mes.
+  function armarBuckets(desde, hasta, lista) {
+    const dias = diffDays(desde, hasta) + 1;
+    const gran = dias <= 45 ? "día" : dias <= 270 ? "semana" : "mes";
+    const hoy = todayStr();
+    const out = [];
+    let indice;
+    if (gran === "día") {
+      for (let i = 0; i < dias; i++) {
+        const d = addDays(desde, i);
+        out.push({ desde: d, hasta: d, etiqueta: String(Number(d.slice(8))), titulo: fmtDM(d) });
+      }
+      indice = (dia) => diffDays(desde, dia);
+    } else if (gran === "semana") {
+      const dow = new Date(desde + "T12:00:00Z").getUTCDay(); // 0 = domingo
+      const lunes0 = addDays(desde, -((dow + 6) % 7));
+      const n = Math.floor(diffDays(lunes0, hasta) / 7) + 1;
+      for (let i = 0; i < n; i++) {
+        const a = addDays(lunes0, i * 7);
+        out.push({ desde: a, hasta: addDays(a, 6), etiqueta: fmtDM(a), titulo: "semana del " + fmtDM(a) });
+      }
+      indice = (dia) => Math.floor(diffDays(lunes0, dia) / 7);
+    } else {
+      const y0 = Number(desde.slice(0, 4)), m0 = Number(desde.slice(5, 7));
+      const n = (Number(hasta.slice(0, 4)) * 12 + Number(hasta.slice(5, 7))) - (y0 * 12 + m0) + 1;
+      for (let i = 0; i < n; i++) {
+        const t = y0 * 12 + (m0 - 1) + i;
+        const y = Math.floor(t / 12), m = (t % 12) + 1;
+        const a = y + "-" + String(m).padStart(2, "0") + "-01";
+        out.push({ desde: a, hasta: monthEndStr(a), etiqueta: MESES[m - 1] + " " + String(y).slice(2), titulo: MESES[m - 1] + " " + y });
+      }
+      indice = (dia) => (Number(dia.slice(0, 4)) * 12 + Number(dia.slice(5, 7))) - (y0 * 12 + m0);
+    }
+    out.forEach((b) => { b.valor = 0; b.pedidos = 0; b.hoy = hoy >= b.desde && hoy <= b.hasta; });
+    lista.forEach((p) => {
+      const i = indice(p._dia);
+      if (i >= 0 && i < out.length) { out[i].valor += num(p.subtotal); out[i].pedidos++; }
+    });
+    return { gran: gran, buckets: out };
+  }
+
+  function drawChart() {
+    const box = document.getElementById("dash-chart");
+    const c = dash.chart;
+    if (!box || !c) return;
+    const W = Math.max(Math.round(box.clientWidth) || 560, 260);
+    const H = W < 420 ? 190 : 220;
+    const pl = 42, pr = 8, pt = 22, pb = 26;
+    const plotW = W - pl - pr, plotH = H - pt - pb;
+    const n = c.buckets.length;
+    const max = c.buckets.reduce((m, b) => Math.max(m, b.valor), 0);
+    const tope = max > 0 ? niceMax(max) : 1000;
+    const slot = plotW / n;
+    const bw = Math.min(slot * 0.66, 48);
+    const paso = Math.max(1, Math.ceil((n * (c.gran === "día" ? 28 : 46)) / plotW));
+    let svg = '<svg viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="' + escAttr(c.aria) + '">';
+    [0, 0.5, 1].forEach((t) => {
+      const y = pt + plotH * (1 - t);
+      svg += '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y + '" y2="' + y + '" stroke="#ECE6DE"/>';
+      svg += '<text x="' + (pl - 6) + '" y="' + (y + 4) + '" text-anchor="end">' + fmtEje(tope * t) + "</text>";
+    });
+    let pico = -1;
+    c.buckets.forEach((b, i) => {
+      if (b.valor > 0 && (pico < 0 || b.valor > c.buckets[pico].valor)) pico = i;
+    });
+    c.buckets.forEach((b, i) => {
+      const x = pl + i * slot + (slot - bw) / 2;
+      const h = b.valor > 0 ? Math.max((b.valor / tope) * plotH, 2) : 0;
+      const y = pt + plotH - h;
+      if (b.valor > 0) {
+        svg += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2" fill="' + (b.hoy ? "#7A3B33" : "#350A06") + '">' +
+          "<title>" + escHtml(b.titulo + (b.hoy ? " (hoy)" : "") + ": " + fmtMoney(b.valor) + " · " + b.pedidos + (b.pedidos === 1 ? " pedido" : " pedidos")) + "</title></rect>";
+      }
+      if (i % paso === 0) {
+        svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + escHtml(b.etiqueta) + "</text>";
+      }
+    });
+    if (pico >= 0) {
+      const b = c.buckets[pico];
+      const cx = pl + pico * slot + slot / 2;
+      const yy = pt + plotH - Math.max((b.valor / tope) * plotH, 2) - 5;
+      const anc = cx < pl + 50 ? "start" : cx > W - 50 ? "end" : "middle";
+      const ax = anc === "start" ? cx - bw / 2 : anc === "end" ? cx + bw / 2 : cx;
+      svg += '<text x="' + ax.toFixed(1) + '" y="' + yy.toFixed(1) + '" text-anchor="' + anc + '" style="fill:#241008;font-weight:600">' + escHtml(fmtMoney(b.valor)) + "</text>";
+    } else {
+      svg += '<text x="' + (pl + plotW / 2) + '" y="' + (pt + plotH / 2) + '" text-anchor="middle">Sin ventas en este período</text>';
+    }
+    box.innerHTML = svg + "</svg>";
+  }
+
+  function barrasHtml(items, total, sufijo) {
+    const tope = items.length ? items[0].valor : 0;
+    return items
       .map(
-        (p) =>
-          "<tr><td>" +
-          fmtFecha(p.created_at) +
-          "</td><td>" +
-          escHtml(p.cliente_nombre) +
-          "<br><span class='muted'>" +
-          escHtml(p.cliente_telefono) +
-          "</span></td><td>" +
-          resumenItems(p.items) +
-          "</td><td>" +
-          fmtMoney(p.subtotal) +
-          "</td><td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminVerPedido('" +
-          p.id +
-          "')\">Ver en Pedidos</button></td></tr>"
+        (it) =>
+          '<div class="row"><span class="nm">' + it.nombre + '</span><div class="track" aria-hidden="true"><div class="fill" style="width:' +
+          (tope ? Math.max((it.valor / tope) * 100, 2) : 0).toFixed(1) + '%"></div></div><span class="amt">' + fmtMoney(it.valor) +
+          '<span class="pct">' + (sufijo ? sufijo(it) : total ? Math.round((it.valor / total) * 100) + "%" : "") + "</span></span></div>"
       )
       .join("");
   }
 
-  function fmtFecha(iso) {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    return d.toLocaleDateString("es-UY", { day: "2-digit", month: "2-digit", year: "numeric" });
+  function normCat(c) {
+    const k = String(c || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+    return k || "otro";
+  }
+
+  function edadHtml(d) {
+    return '<span class="age' + (d >= 2 ? " late" : "") + '">' + (d <= 0 ? "hoy" : d === 1 ? "1 día" : d + " días") + "</span>";
+  }
+
+  function setEstadoDash(tipo, html) {
+    const el = document.getElementById("dash-status");
+    if (!tipo) { el.hidden = true; el.innerHTML = ""; el.className = "dash-status"; return; }
+    el.className = "dash-status" + (tipo === "err" ? " err" : "");
+    el.innerHTML = html;
+    el.hidden = false;
+  }
+
+  function renderDashboard() {
+    try {
+      renderDashboardInterno();
+    } catch (e) {
+      console.error(e);
+      setEstadoDash("err", "No se pudo dibujar el resumen: " + escHtml(e && e.message ? e.message : e));
+    }
+  }
+
+  function renderDashboardInterno() {
+    const hoy = todayStr();
+    const R = dashRango(hoy);
+    const cur = calcPeriodo(R.desde, R.hasta);
+    const prev = R.prev ? calcPeriodo(R.prev[0], R.prev[1]) : null;
+    const hayP = !!pedidosEstado.hayDatos;
+    const hayG = !!gastosEstado.hayDatos;
+    const guion = "—";
+
+    document.getElementById("dash-range").textContent =
+      fmtRango(R.desde, R.hasta) + (R.desde === hoy && R.hasta === hoy ? " (hoy)" : "") + " · " +
+      (R.prev ? "comparado con " + fmtRango(R.prev[0], R.prev[1]) : "sin comparación");
+    const panel = document.getElementById("panel-dashboard");
+    panel.setAttribute("aria-busy", dash.visibleLoading || (dash.loading && !(pedidosEstado.intento && gastosEstado.intento)) ? "true" : "false");
+
+    // Avisos: fechas al revés, datos recortados
+    const notas = [];
+    if (R.nota) notas.push(R.nota);
+    if (pedidosEstado.truncado || gastosEstado.truncado) notas.push("Hay más registros que los que se pueden mostrar: los números del dashboard pueden quedar incompletos.");
+    const notaEl = document.getElementById("dash-note");
+    notaEl.hidden = !notas.length;
+    notaEl.className = "dash-note" + (R.nota || notas.length ? " warn" : "");
+    notaEl.textContent = notas.join(" ");
+
+    // Estado de la carga
+    const fallos = [];
+    if (pedidosEstado.intento && !pedidosEstado.ok) fallos.push({ que: "los pedidos", msg: pedidosEstado.error });
+    if (gastosEstado.intento && !gastosEstado.ok) fallos.push({ que: "los gastos", msg: gastosEstado.error });
+    if (fallos.length) {
+      setEstadoDash(
+        "err",
+        "<span>No se pudieron cargar " + fallos.map((f) => f.que).join(" ni ") + " (" + escHtml(fallos[0].msg) + "). " +
+          (hayP && hayG ? "Lo que ves puede estar desactualizado." : "Por eso no se muestran esos números.") +
+          '</span><button type="button" class="btn-soft" data-act="reintentar">Reintentar</button>'
+      );
+    } else if (dash.loading && !(pedidosEstado.intento && gastosEstado.intento)) {
+      setEstadoDash("info", "Cargando datos…");
+    } else {
+      setEstadoDash(null);
+    }
+
+    // --- Para atender ahora (todos los pedidos, no depende del período) ---
+    const cnt = {};
+    ESTADOS.forEach((e) => { cnt[e] = 0; });
+    pedidosCache.forEach((p) => { if (cnt[p.estado] !== undefined) cnt[p.estado]++; });
+    const nuevos = pedidosCache
+      .filter((p) => p.estado === "nuevo")
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const edadMax = nuevos.length ? diffDays(nuevos[0]._dia, hoy) : 0;
+    const subNuevos = !hayP ? "" : !nuevos.length ? "Todo al día" : edadMax > 0 ? "El más viejo espera hace " + edadMax + (edadMax === 1 ? " día" : " días") : "Todos llegaron hoy";
+    const tile = (est, label, extra, hot) =>
+      '<button type="button" class="att' + (hot ? " hot" : "") + '" data-estado="' + est + '"><span class="n">' + (hayP ? cnt[est] : guion) +
+      '</span><span class="l">' + label + "</span>" + (extra ? '<span class="sub">' + extra + "</span>" : "") + "</button>";
+    document.getElementById("dash-atencion").innerHTML =
+      tile("nuevo", "Nuevos sin gestionar", subNuevos, hayP && cnt.nuevo > 0) +
+      tile("confirmado", "Confirmados, sin empezar") +
+      tile("en_produccion", "En producción") +
+      tile("listo", "Listos para entregar");
+
+    // --- Indicadores ---
+    const s = cur.cancelados;
+    const kIng = hayP
+      ? kpiHtml("Ingresos", fmtMoney(cur.ingresos), "", [
+          prev ? deltaPct(cur.ingresos, prev.ingresos, false) : "Todo el historial",
+          "Entregado: " + fmtMoney(cur.entregados),
+        ])
+      : kpiHtml("Ingresos", guion, "", ["Sin datos"]);
+    const kGas = hayG
+      ? kpiHtml("Gastos", fmtMoney(cur.totalGastos), "", [prev ? deltaPct(cur.totalGastos, prev.totalGastos, true) : "Todo el historial"])
+      : kpiHtml("Gastos", guion, "", ["Sin datos"]);
+    let kSal;
+    if (hayP && hayG) {
+      kSal = kpiHtml("Saldo de caja", fmtMoney(cur.saldo), cur.saldo >= 0 ? "pos" : "neg", [
+        prev ? deltaMonto(cur.saldo, prev.saldo) : "Todo el historial",
+        cur.ingresos > 0 ? (cur.saldo >= 0 ? "Queda el " + Math.round(cur.margen) + "% de lo que entra" : "Los gastos superan a los ingresos") : "Sin ingresos en el período",
+      ]);
+    } else {
+      kSal = kpiHtml("Saldo de caja", guion, "", ["Falta cargar datos"]);
+    }
+    const kPed = hayP
+      ? kpiHtml("Pedidos", String(cur.ok.length), "", [
+          prev ? deltaPct(cur.ok.length, prev.ok.length, false) : "Todo el historial",
+          "Ticket promedio " + fmtMoney(cur.ticket) + (s ? " · " + s + (s === 1 ? " cancelado" : " cancelados") : ""),
+        ])
+      : kpiHtml("Pedidos", guion, "", ["Sin datos"]);
+    document.getElementById("dash-kpis").innerHTML = kIng + kGas + kSal + kPed;
+    renderGananciaNeta(cur, prev, hayP, hayG);
+
+    // --- Gráfico de ingresos ---
+    const B = armarBuckets(R.desde, R.hasta, cur.ok);
+    const pico = B.buckets.reduce((m, b) => (b.valor > (m ? m.valor : 0) ? b : m), null);
+    const unidad = B.gran;
+    const aria = "Ingresos por " + unidad + ", del " + fmtDMY(R.desde) + " al " + fmtDMY(R.hasta) + ". Total " + fmtMoney(cur.ingresos) +
+      (pico ? ". Mejor " + unidad + ": " + pico.titulo + " con " + fmtMoney(pico.valor) + "." : ". Sin ventas en el período.");
+    dash.chart = { buckets: B.buckets, gran: B.gran, aria: hayP ? aria : "Ingresos: todavía sin datos." };
+    document.getElementById("dash-chart-title").textContent = "Ingresos por " + unidad;
+    document.getElementById("dash-chart-hint").textContent = !hayP
+      ? "Todavía no hay datos para mostrar."
+      : pico
+      ? "Mejor " + unidad + ": " + pico.titulo + " (" + fmtMoney(pico.valor) + ")." + (unidad === "semana" ? " Cada barra es una semana, desde el lunes." : unidad === "mes" ? " Cada barra es un mes." : " Los días sin ventas se ven vacíos.")
+      : "Sin ventas en este período.";
+    if (hayP) drawChart();
+    else document.getElementById("dash-chart").innerHTML = '<p class="empty-inline">Sin datos todavía.</p>';
+    const conVentas = B.buckets.filter((b) => b.valor > 0);
+    document.getElementById("dash-chart-table").innerHTML = conVentas.length
+      ? '<table><thead><tr><th>' + (unidad === "día" ? "Día" : unidad === "semana" ? "Semana" : "Mes") + '</th><th>Pedidos</th><th>Ingresos</th></tr></thead><tbody>' +
+        conVentas.map((b) => "<tr><td>" + escHtml(b.titulo) + "</td><td>" + b.pedidos + "</td><td>" + fmtMoney(b.valor) + "</td></tr>").join("") + "</tbody></table>"
+      : '<p class="empty-inline">Sin ventas en este período.</p>';
+
+    // --- Gastos por categoría ---
+    const cats = {};
+    cur.gastos.forEach((g) => { const k = normCat(g.categoria); cats[k] = (cats[k] || 0) + num(g.monto); });
+    const listaCats = Object.keys(cats)
+      .map((k) => ({ nombre: escHtml(CAT_LABEL[k] || (String(k).charAt(0).toUpperCase() + String(k).slice(1))), valor: cats[k] }))
+      .sort((a, b) => b.valor - a.valor);
+    document.getElementById("dash-gastos-hint").textContent = !hayG ? "Todavía no hay datos para mostrar." : cur.gastos.length ? "Total " + fmtMoney(cur.totalGastos) + " en " + cur.gastos.length + (cur.gastos.length === 1 ? " gasto" : " gastos") : "Sin gastos en este período.";
+    document.getElementById("dash-gastos-bars").innerHTML = hayG ? barrasHtml(listaCats, cur.totalGastos) : "";
+
+    // --- Ventas por canal ---
+    const porCanal = {};
+    cur.ok.forEach((p) => {
+      const c = porCanal[p.canal] || (porCanal[p.canal] = { valor: 0, n: 0 });
+      c.valor += num(p.subtotal);
+      c.n++;
+    });
+    const listaCanal = Object.keys(porCanal)
+      .map((k) => ({ nombre: escHtml(CANAL_LABEL[k] || k), valor: porCanal[k].valor, n: porCanal[k].n }))
+      .sort((a, b) => b.valor - a.valor);
+    document.getElementById("dash-canal-hint").textContent = !hayP ? "Todavía no hay datos para mostrar." : listaCanal.length ? "Ingresos por dónde entró la venta, sin cancelados." : "Sin ventas en este período.";
+    document.getElementById("dash-canal-bars").innerHTML = hayP ? barrasHtml(listaCanal, cur.ingresos, (it) => it.n + (it.n === 1 ? " pedido" : " pedidos")) : "";
+
+    // --- Lo más pedido ---
+    // Por producto: unidades y, si se conoce el costo de todas, la ganancia (ventas − costo de esas unidades).
+    const porProd = {};
+    cur.ok.forEach((p) => p.items.forEach((it) => {
+      const nombre = String((it && it.nombre) || "Sin nombre");
+      const a = porProd[nombre] || (porProd[nombre] = { u: 0, venta: 0, costo: 0, falta: false, conPrecio: false });
+      const q = num(it && it.qty);
+      a.u += q;
+      if (it && it.precio !== null && it.precio !== undefined) {
+        a.conPrecio = true;
+        a.venta += q * num(it.precio);
+        const c = costoItem(it);
+        if (c.v === null) a.falta = true;
+        else a.costo += q * c.v;
+      }
+    }));
+    const top = Object.keys(porProd).map((k) => [k, porProd[k]]).sort((a, b) => b[1].u - a[1].u).slice(0, 5);
+    const gpHtml = (a) =>
+      !a.conPrecio
+        ? '<span class="gp none">a cotizar</span>'
+        : a.falta
+        ? '<span class="gp none">sin costo</span>'
+        : '<span class="gp' + (a.venta - a.costo < 0 ? " neg" : "") + '">ganancia ' + fmtMoney(a.venta - a.costo) + "</span>";
+    document.getElementById("dash-top").innerHTML = !hayP
+      ? ""
+      : top.length
+      ? top.map((t) => "<li><span>" + escHtml(t[0]) + gpHtml(t[1]) + '</span><span class="u">' + t[1].u + " un.</span></li>").join("")
+      : '<li class="empty-inline">Sin pedidos en este período.</li>';
+
+    // --- Pedidos nuevos sin gestionar ---
+    const vista = nuevos.slice(0, MAX_NUEVOS);
+    document.getElementById("dash-nuevos-hint").textContent = !hayP
+      ? "Todavía no hay datos para mostrar."
+      : nuevos.length
+      ? nuevos.length + (nuevos.length === 1 ? " espera respuesta" : " esperan respuesta") + " · del más viejo al más nuevo" + (nuevos.length > MAX_NUEVOS ? " · se muestran " + MAX_NUEVOS : "")
+      : "";
+    document.getElementById("dash-nuevos-empty").hidden = !(hayP && !nuevos.length);
+    document.getElementById("dash-nuevos-tbody").innerHTML = vista
+      .map((p) =>
+        "<tr><td data-label=\"Hace\">" + edadHtml(diffDays(p._dia, hoy)) + "</td>" +
+        "<td data-label=\"Cliente\"><span>" + escHtml(p.cliente_nombre) + canalTag(p.canal) + "<br><span class=\"muted\">" + escHtml(p.cliente_telefono) + "</span></span></td>" +
+        "<td data-label=\"Items\">" + resumenItems(p.items) + "</td>" +
+        "<td class=\"m\" data-label=\"Subtotal\">" + fmtMoney(p.subtotal) + "</td>" +
+        "<td class=\"act\"><button type=\"button\" class=\"btn-soft\" data-ir-pedido=\"" + escAttr(p.id) + "\">Abrir</button></td></tr>"
+      )
+      .join("");
+    document.querySelector("#panel-dashboard table.nt").hidden = !vista.length;
+  }
+
+  // Ganancia neta del período, desglosada: ingresos − costo de las piezas − otros gastos.
+  function renderGananciaNeta(cur, prev, hayP, hayG) {
+    const body = document.getElementById("dash-gn-body");
+    document.getElementById("dash-gn-hint").textContent =
+      "Ventas − costo de las piezas − otros gastos. El filamento y la luz ya están dentro del costo de las piezas, por eso no se restan dos veces.";
+    if (!hayP || !hayG) {
+      body.innerHTML = '<p class="empty-inline">Todavía no hay datos para calcularla.</p>';
+      return;
+    }
+    const ing = cur.ingresos;
+    const pct = (v) => (ing > 0 ? Math.round((v / ing) * 100) + "%" : "—");
+    const linea = (txt, monto, extra, cls, delta) =>
+      '<div class="gn-line' + (cls ? " " + cls : "") + '"><span class="t">' + txt + (delta ? '<span class="gn-d">' + delta + "</span>" : "") +
+      '</span><span class="a">' + monto + '</span><span class="p">' + extra + "</span></div>";
+
+    const w = (() => {
+      if (!(ing > 0)) return [0, 0, 0];
+      if (cur.ganancia >= 0) return [cur.costoPiezas / ing, cur.gastosOp / ing, cur.ganancia / ing];
+      const t = cur.costoPiezas + cur.gastosOp;
+      return t > 0 ? [cur.costoPiezas / t, cur.gastosOp / t, 0] : [0, 0, 0];
+    })();
+    const ariaBar = ing > 0
+      ? "De los ingresos: costo de piezas " + pct(cur.costoPiezas) + ", otros gastos " + pct(cur.gastosOp) + ", ganancia neta " + pct(cur.ganancia) + "."
+      : "Sin ingresos en el período.";
+
+    const notas = [];
+    if (costosEstado.intento && !costosEstado.ok) {
+      notas.push({
+        warn: true,
+        html: costosEstado.falta
+          ? "Todavía no se pueden cargar costos: falta correr <strong>supabase/migracion_dashboard.sql</strong> en Supabase. Mientras tanto, los pedidos nuevos cuentan sin costo."
+          : "No se pudieron leer los costos (" + escHtml(costosEstado.error) + "): la ganancia no los descuenta.",
+      });
+    }
+    if (cur.ok.length && cur.pedSinCosto > 0) {
+      const parte = ing > 0 ? " (el " + Math.round((cur.ingSinCosto / ing) * 100) + "% de los ingresos)" : "";
+      notas.push({
+        warn: true,
+        html: "Faltan costos en " + cur.pedSinCosto + " de " + cur.ok.length + (cur.ok.length === 1 ? " pedido" : " pedidos") + parte +
+          ". Esa parte cuenta sin costo, así que la ganancia puede estar sobreestimada. " +
+          '<button type="button" class="btn-soft" data-act="ir-costos">Cargar costos</button>',
+      });
+    }
+    if (cur.pedEstimado > 0) {
+      notas.push({ warn: false, html: "En " + cur.pedEstimado + (cur.pedEstimado === 1 ? " pedido" : " pedidos") + " se usó el costo actual del producto, porque no quedó guardado al vender." });
+    }
+    if (cur.gastosEnCosto > 0) {
+      notas.push({ warn: false, html: "Filamento y electricidad cargados en Gastos (" + fmtMoney(cur.gastosEnCosto) + ") no se restan otra vez: ya están en el costo de las piezas." });
+    }
+
+    body.innerHTML =
+      '<div class="gn-grid">' +
+        '<div class="gn-main"><div class="gn-val ' + (cur.ganancia >= 0 ? "pos" : "neg") + '" id="dash-gn-val">' + fmtMoney(cur.ganancia) + "</div>" +
+          '<div class="gn-sub">' +
+            (ing > 0 ? (cur.ganancia >= 0 ? "Margen neto " + Math.round(cur.margenNeto) + "% de lo que entra" : "Los costos y gastos superan a los ingresos") : "Sin ingresos en el período") +
+          "</div>" +
+          '<div class="gn-sub">' + (prev ? deltaMonto(cur.ganancia, prev.ganancia) : "Todo el historial") + "</div>" +
+        "</div>" +
+        '<div class="gn-lines">' +
+          linea("Ingresos", fmtMoney(ing), ing > 0 ? "100%" : "—") +
+          linea("− Costo de piezas", fmtMoney(cur.costoPiezas), pct(cur.costoPiezas), "", prev ? deltaPct(cur.costoPiezas, prev.costoPiezas, true) : "") +
+          linea("− Otros gastos", fmtMoney(cur.gastosOp), pct(cur.gastosOp), "", prev ? deltaPct(cur.gastosOp, prev.gastosOp, true) : "") +
+          linea("= Ganancia neta", fmtMoney(cur.ganancia), pct(cur.ganancia), "tot") +
+        "</div>" +
+      "</div>" +
+      '<div class="gn-bar" role="img" aria-label="' + escAttr(ariaBar) + '">' +
+        '<span class="c1" style="width:' + (w[0] * 100).toFixed(2) + '%"></span>' +
+        '<span class="c2" style="width:' + (w[1] * 100).toFixed(2) + '%"></span>' +
+        '<span class="c3" style="width:' + (w[2] * 100).toFixed(2) + '%"></span>' +
+      "</div>" +
+      '<div class="gn-legend" aria-hidden="true"><span><i class="c1"></i>Costo de piezas</span><span><i class="c2"></i>Otros gastos</span><span><i class="c3"></i>Ganancia neta</span></div>' +
+      notas.map((n) => '<p class="gn-note' + (n.warn ? " warn" : "") + '">' + n.html + "</p>").join("");
+  }
+
+  function canalTag(c) {
+    const k = CANALES.includes(c) ? c : "otro";
+    return '<span class="canal-tag' + (k === "web" ? " web" : "") + '">' + escHtml(CANAL_LABEL[k]) + "</span>";
   }
 
   function resumenItems(items) {
     if (!items || !items.length) return "—";
-    return items.map((it) => it.qty + "× " + escHtml(it.nombre) + (it.tamano ? " (" + escHtml(it.tamano) + ")" : "")).join(", ");
+    return items
+      .map((it) => num(it && it.qty) + "× " + escHtml((it && it.nombre) || "Sin nombre") + (it && it.tamano ? " (" + escHtml(it.tamano) + ")" : ""))
+      .join(", ");
   }
 
-  window.stratoAdminVerPedido = function (id) {
-    document.querySelector('nav.tabs button[data-panel="panel-pedidos"]').click();
-    document.getElementById("pedidos-buscar").value = "";
-    document.getElementById("pedidos-filtro-estado").value = "nuevo";
-    renderPedidos();
-    setTimeout(() => {
-      const row = document.querySelector('tr[data-pedido-id="' + id + '"]');
-      if (row) {
-        row.scrollIntoView({ behavior: "smooth", block: "center" });
-        row.style.background = "rgba(53,10,6,0.08)";
-      }
-    }, 100);
-  };
+  /* ---- Actualización automática ---- */
+  function actualizarTextoActualizado() {
+    const el = document.getElementById("dash-upd");
+    if (!dash.lastOkAt) { el.textContent = ""; return; }
+    const min = Math.floor((Date.now() - dash.lastOkAt) / 60000);
+    el.textContent = "Actualizado " + (min < 1 ? "hace un momento" : min < 60 ? "hace " + min + " min" : "hace " + Math.floor(min / 60) + " h");
+  }
+
+  function actualizarBadge() {
+    const n = pedidosEstado.hayDatos ? pedidosCache.filter((p) => p.estado === "nuevo").length : 0;
+    const b = document.getElementById("tab-badge");
+    b.hidden = !n;
+    b.innerHTML = n ? n + '<span class="sr-only"> pedidos nuevos</span>' : "";
+    document.title = (n ? "(" + n + ") " : "") + TITLE_BASE;
+  }
+
+  function firmaDe() {
+    return pedidosCache.length + "|" + pedidosCache.map((p) => p.id + ":" + p.estado).join(",");
+  }
+
+  async function refreshDatos(op) {
+    if (dash.loading) return;
+    const silencioso = !!(op && op.silencioso);
+    dash.loading = true;
+    dash.visibleLoading = !silencioso;
+    const btn = document.getElementById("dash-refresh");
+    if (!silencioso) {
+      btn.disabled = true;
+      btn.textContent = "Actualizando…";
+      document.getElementById("panel-dashboard").setAttribute("aria-busy", "true");
+    }
+    const antes = firmaDe();
+    // Si los costos no se pudieron leer (por ejemplo, la migración todavía no estaba corrida), se reintenta junto con lo demás.
+    const reintentaCostos = !costosEstado.ok;
+    const [okP, okG] = await Promise.all([
+      loadPedidos().catch(() => false), loadGastosTodos().catch(() => false), reintentaCostos ? loadCostos().catch(() => false) : null,
+    ]);
+    if (reintentaCostos && costosEstado.ok) { renderProductos(); renderProdCostos(); }
+    dash.loading = false;
+    dash.visibleLoading = false;
+    btn.disabled = false;
+    btn.textContent = "↻ Actualizar";
+    if (okP && okG) dash.lastOkAt = Date.now();
+    renderDashboard();
+    actualizarBadge();
+    actualizarAvisosPedidos();
+    actualizarTextoActualizado();
+    if (okP && firmaDe() !== antes) refrescarListaPedidos();
+  }
+
+  function iniciarAutoRefresh() {
+    setInterval(() => {
+      if (document.visibilityState === "visible") refreshDatos({ silencioso: true });
+    }, 60000);
+    setInterval(actualizarTextoActualizado, 15000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - dash.lastOkAt > 30000 || !pedidosEstado.ok || !gastosEstado.ok) refreshDatos({ silencioso: true });
+      actualizarTextoActualizado();
+    });
+    actualizarTextoActualizado();
+    actualizarBadge();
+  }
 
   /* ============ PEDIDOS ============ */
-  document.getElementById("pedidos-buscar").addEventListener("input", renderPedidos);
-  document.getElementById("pedidos-filtro-estado").addEventListener("change", renderPedidos);
+  const elBuscar = document.getElementById("pedidos-buscar");
+  const elFiltroEstado = document.getElementById("pedidos-filtro-estado");
+  const elFiltroCanal = document.getElementById("pedidos-filtro-canal");
+  const elPedidosTbody = document.getElementById("pedidos-tbody");
+  const elPedidosMsg = document.getElementById("pedidos-msg");
+  let msgTimer = null;
+  let msgTipo = "";
+
+  elBuscar.addEventListener("input", renderPedidos);
+  elFiltroEstado.addEventListener("change", renderPedidos);
+  elFiltroCanal.addEventListener("change", renderPedidos);
+
+  function mostrarMsgPedidos(tipo, texto, op) {
+    elPedidosMsg.className = "inline-msg " + tipo;
+    elPedidosMsg.textContent = texto;
+    if (op && op.accion) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn-soft";
+      b.style.marginLeft = "10px";
+      b.dataset.act = op.accion;
+      b.textContent = op.accion === "reintentar" ? "Reintentar" : "Mostrar";
+      elPedidosMsg.appendChild(b);
+    }
+    elPedidosMsg.hidden = false;
+    msgTipo = op && op.clave ? op.clave : tipo;
+    clearTimeout(msgTimer);
+    if (tipo === "ok") msgTimer = setTimeout(ocultarMsgPedidos, 7000);
+  }
+  function ocultarMsgPedidos() {
+    clearTimeout(msgTimer);
+    elPedidosMsg.hidden = true;
+    elPedidosMsg.textContent = "";
+    msgTipo = "";
+  }
+  elPedidosMsg.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    if (b.dataset.act === "reintentar") refreshDatos({ manual: true });
+    if (b.dataset.act === "mostrar") { pedidosSucio = false; ocultarMsgPedidos(); renderPedidos(); }
+  });
+
+  // Aviso fijo cuando no se pudieron leer los pedidos (y se retira solo cuando vuelven a cargar).
+  function actualizarAvisosPedidos() {
+    if (pedidosEstado.intento && !pedidosEstado.ok) {
+      mostrarMsgPedidos("err", "No se pudieron cargar los pedidos (" + pedidosEstado.error + "). Lo que ves puede estar desactualizado.", { accion: "reintentar", clave: "carga" });
+    } else if (msgTipo === "carga") {
+      ocultarMsgPedidos();
+    }
+    actualizarBadge();
+  }
+
+  // Después de una actualización automática: no se redibuja la lista si el usuario está leyendo un detalle.
+  function refrescarListaPedidos() {
+    const activo = document.getElementById("panel-pedidos").classList.contains("active");
+    const enUso = !!elPedidosTbody.querySelector("tr.detalle-row:not(.hidden-row)") || elPedidosTbody.contains(document.activeElement);
+    if (!activo) { pedidosSucio = true; return; }
+    if (enUso) {
+      pedidosSucio = true;
+      mostrarMsgPedidos("info", "Hay cambios en los pedidos.", { accion: "mostrar", clave: "cambios" });
+      return;
+    }
+    renderPedidos();
+  }
 
   function renderPedidos() {
-    const term = document.getElementById("pedidos-buscar").value.trim().toLowerCase();
-    const estadoFiltro = document.getElementById("pedidos-filtro-estado").value;
+    const term = elBuscar.value.trim().toLowerCase();
+    const estadoFiltro = elFiltroEstado.value;
+    const canalFiltro = elFiltroCanal.value;
 
     let list = pedidosCache;
     if (estadoFiltro !== "todos") list = list.filter((p) => p.estado === estadoFiltro);
+    if (canalFiltro !== "todos") list = list.filter((p) => p.canal === canalFiltro);
     if (term) {
       list = list.filter((p) =>
         [p.cliente_nombre, p.cliente_telefono, p.cliente_email].filter(Boolean).join(" ").toLowerCase().includes(term)
       );
     }
 
-    const tbody = document.getElementById("pedidos-tbody");
     document.getElementById("pedidos-empty").style.display = list.length ? "none" : "block";
+    document.getElementById("pedidos-count").textContent =
+      (pedidosEstado.hayDatos ? "Mostrando " + list.length + " de " + pedidosCache.length + (pedidosCache.length === 1 ? " pedido" : " pedidos") : "") +
+      (pedidosEstado.truncado ? " · hay más pedidos viejos que no se cargaron" : "");
 
-    tbody.innerHTML = list
+    elPedidosTbody.innerHTML = list
       .map((p) => {
-        const estadoOptions = ESTADOS.map(
-          (e) => '<option value="' + e + '"' + (e === p.estado ? " selected" : "") + ">" + ESTADO_LABEL[e] + "</option>"
-        ).join("");
+        const conocido = ESTADOS.includes(p.estado);
+        const estadoClase = conocido ? p.estado : "desconocido";
+        const estadoOptions =
+          (conocido ? "" : '<option value="' + escAttr(p.estado) + '" selected>Desconocido</option>') +
+          ESTADOS.map((e) => '<option value="' + e + '"' + (e === p.estado ? " selected" : "") + ">" + ESTADO_LABEL[e] + "</option>").join("");
+        const id = escAttr(p.id);
         return (
-          '<tr class="clickable" data-pedido-id="' +
-          p.id +
-          '" onclick="if(event.target.tagName!==\'SELECT\' && event.target.tagName!==\'BUTTON\') stratoAdminToggleDetalle(\'' +
-          p.id +
-          "')\">" +
-          "<td>" +
-          fmtFecha(p.created_at) +
-          "</td><td>" +
-          escHtml(p.cliente_nombre) +
-          "<br><span class='muted'>" +
-          escHtml(p.cliente_telefono) +
-          "</span></td><td>" +
-          resumenItems(p.items) +
-          "</td><td>" +
-          fmtMoney(p.subtotal) +
-          "</td><td>" +
-          escHtml(p.entrega) +
-          '</td><td><select class="estado-select estado-' +
-          p.estado +
-          '" onchange="stratoAdminCambiarEstado(\'' +
-          p.id +
-          "', this.value)\">" +
-          estadoOptions +
-          "</select></td><td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminToggleDetalle('" +
-          p.id +
-          "')\">Detalle</button></td></tr>" +
-          '<tr class="detalle-row hidden-row" id="detalle-' +
-          p.id +
-          '"><td colspan="7">' +
-          detallePedido(p) +
-          "</td></tr>"
+          '<tr class="clickable" data-pedido-id="' + id + '"><td data-label="Fecha">' + fmtFecha(p.created_at) +
+          '</td><td data-label="Cliente"><span>' + escHtml(p.cliente_nombre) + canalTag(p.canal) + "<br><span class='muted'>" + escHtml(p.cliente_telefono) + '</span></span></td><td data-label="Items">' +
+          resumenItems(p.items) + '</td><td data-label="Subtotal">' + fmtMoney(p.subtotal) + '</td><td data-label="Entrega">' + escHtml(p.entrega) +
+          '</td><td data-label="Estado"><select class="estado-select estado-' + estadoClase + '" data-id="' + id + '" aria-label="Estado del pedido de ' + escAttr(p.cliente_nombre) + '">' +
+          estadoOptions + '</select></td><td class="act"><button type="button" class="btn-secondary btn-small btn-detalle" aria-expanded="false" aria-controls="detalle-' + id + '">Detalle</button></td></tr>' +
+          '<tr class="detalle-row hidden-row" id="detalle-' + id + '" data-detalle-de="' + id + '"><td colspan="7">' + detallePedido(p) + "</td></tr>"
         );
       })
       .join("");
@@ -383,45 +1280,473 @@
 
   function detallePedido(p) {
     const items = (p.items || [])
-      .map(
-        (it) =>
-          "• " + it.qty + "× " + escHtml(it.nombre) +
-          (it.tamano || it.color ? " (" + [it.tamano, it.color].filter(Boolean).map(escHtml).join(", ") + ")" : "") +
-          " — " + fmtMoney(it.precio) + " c/u" +
-          (it.descuento_cantidad_pct ? " <em>(-" + escHtml(it.descuento_cantidad_pct) + "% por cantidad, lista " + fmtMoney(it.precio_lista) + ")</em>" : "") +
+      .map((it) => {
+        it = it || {};
+        const extras = [it.tamano, it.color].filter(Boolean).map(escHtml);
+        const precio = it.precio === null || it.precio === undefined ? "a cotizar" : fmtMoney(num(it.precio)) + " c/u";
+        let costoTxt = "";
+        if (it.precio !== null && it.precio !== undefined) {
+          const c = costoItem(it);
+          costoTxt = c.v === null
+            ? ' · <span class="badge-sc">sin costo</span>'
+            : " · costo " + fmtMoney(c.v) + " c/u" + (c.src === "estimado" ? " <em>(costo actual)</em>" : "");
+        }
+        return (
+          "• " + num(it.qty) + "× " + escHtml(it.nombre || "Sin nombre") +
+          (extras.length ? " (" + extras.join(", ") + ")" : "") +
+          " — " + precio + costoTxt +
+          (num(it.descuento_cantidad_pct) ? " <em>(-" + num(it.descuento_cantidad_pct) + "% por cantidad, lista " + fmtMoney(num(it.precio_lista)) + ")</em>" : "") +
           (it.nota ? "<br>&nbsp;&nbsp;<em>Obs: " + escHtml(it.nota) + "</em>" : "")
-      )
+        );
+      })
       .join("<br>");
+    // Costo y ganancia del pedido (solo si no está cancelado: un cancelado no cuenta en el dashboard)
+    let rentab = "";
+    if (p.estado !== "cancelado" && (p.items || []).some((it) => it && it.precio !== null && it.precio !== undefined)) {
+      const cp = costoPedido(p);
+      const gan = num(p.subtotal) - cp.costo;
+      rentab =
+        "<br><br><strong>Costo:</strong> " + fmtMoney(cp.costo) + " · <strong>Ganancia:</strong> " +
+        '<span class="' + (gan >= 0 ? "gp-pos" : "gp-neg") + '">' + fmtMoney(gan) + "</span>" +
+        (num(p.subtotal) > 0 ? " (" + Math.round((gan / num(p.subtotal)) * 100) + "% del cobro)" : "") +
+        (cp.faltan ? ' <span class="badge-sc">faltan costos en ' + cp.faltan + (cp.faltan === 1 ? " producto" : " productos") + ": la ganancia real es menor</span>" : "") +
+        (cp.estimado ? " <em>(parte con el costo actual del producto)</em>" : "");
+    }
+    const cotIds = Array.from(new Set((p.items || []).map((it) => it && it.cotizacion_id).filter(Boolean)));
+    const cotTxt = cotIds.length
+      ? "<br><strong>Cotización:</strong> " + cotIds.map((id) => { const c = cotizacionesCache.find((x) => x.id === id); return escHtml(c ? c.nombre_pieza : "cargada desde la calculadora"); }).join(", ")
+      : "";
     return (
-      "<strong>Items:</strong><br>" +
-      (items || "—") +
-      "<br><br><strong>Email:</strong> " +
-      escHtml(p.cliente_email || "—") +
-      "<br><strong>Dirección:</strong> " +
-      escHtml(p.direccion || "—") +
-      "<br><strong>Pago:</strong> " +
-      escHtml(p.pago || "—") +
-      "<br><strong>Notas:</strong> " +
-      escHtml(p.notas || "—")
+      "<strong>Items:</strong><br>" + (items || "—") + rentab +
+      "<br><br><strong>Canal:</strong> " + escHtml(CANAL_LABEL[p.canal] || p.canal) + cotTxt +
+      "<br><strong>Email:</strong> " + escHtml(p.cliente_email || "—") +
+      "<br><strong>Dirección:</strong> " + escHtml(p.direccion || "—") +
+      "<br><strong>Pago:</strong> " + escHtml(p.pago || "—") +
+      "<br><strong>Notas:</strong> " + escHtml(p.notas || "—")
     );
   }
 
-  window.stratoAdminToggleDetalle = function (id) {
-    const row = document.getElementById("detalle-" + id);
-    if (row) row.classList.toggle("hidden-row");
-  };
-
-  window.stratoAdminCambiarEstado = async function (id, nuevoEstado) {
-    const { error } = await stratoSb.from("pedidos").update({ estado: nuevoEstado }).eq("id", id);
-    if (error) {
-      alert("No se pudo actualizar el estado: " + error.message);
+  function toggleDetalle(id) {
+    const rows = elPedidosTbody.querySelectorAll("tr.detalle-row");
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].dataset.detalleDe !== String(id)) continue;
+      const oculto = rows[i].classList.toggle("hidden-row");
+      const tr = rows[i].previousElementSibling;
+      const btn = tr && tr.querySelector(".btn-detalle");
+      if (btn) btn.setAttribute("aria-expanded", oculto ? "false" : "true");
       return;
     }
-    const p = pedidosCache.find((x) => x.id === id);
-    if (p) p.estado = nuevoEstado;
+  }
+
+  // Un solo manejador para toda la tabla (en vez de código dentro de cada fila).
+  elPedidosTbody.addEventListener("click", (e) => {
+    if (e.target.closest("select, a, input")) return;
+    const tr = e.target.closest("tr[data-pedido-id]");
+    if (tr) toggleDetalle(tr.dataset.pedidoId);
+  });
+  elPedidosTbody.addEventListener("change", (e) => {
+    const sel = e.target.closest("select.estado-select");
+    if (sel) cambiarEstado(sel.dataset.id, sel.value, sel);
+  });
+
+  async function cambiarEstado(id, nuevoEstado, sel) {
+    const p = pedidosCache.find((x) => String(x.id) === String(id));
+    if (!p) return;
+    const previo = p.estado;
+    const volver = (texto) => {
+      if (sel) {
+        sel.disabled = false;
+        sel.value = previo;
+        sel.className = "estado-select estado-" + (ESTADOS.includes(previo) ? previo : "desconocido");
+      }
+      mostrarMsgPedidos("err", texto + " El pedido de " + (p.cliente_nombre || "este cliente") + " quedó como estaba (" + (ESTADO_LABEL[previo] || previo) + ").");
+    };
+    if (!ESTADOS.includes(nuevoEstado)) { volver("Estado no válido."); return; }
+    if (sel) sel.disabled = true;
+    let res;
+    try {
+      res = await stratoSb.from("pedidos").update({ estado: nuevoEstado }).eq("id", id).select("id");
+    } catch (e) {
+      volver("No se pudo guardar el cambio de estado (" + (e && e.message ? e.message : "error de conexión") + ").");
+      return;
+    }
+    if (res.error) { volver("No se pudo guardar el cambio de estado (" + res.error.message + ")."); return; }
+    // Supabase no da error si la regla de seguridad no deja modificar: simplemente no toca ninguna fila.
+    if (Array.isArray(res.data) && res.data.length === 0) { volver("El cambio no se guardó (no se encontró el pedido o falta permiso)."); return; }
+
+    p.estado = nuevoEstado;
+    if (msgTipo === "err" || msgTipo === "cambios") ocultarMsgPedidos();
+    if (sel) {
+      sel.disabled = false;
+      sel.className = "estado-select estado-" + nuevoEstado;
+    }
+    if (elFiltroEstado.value !== "todos") renderPedidos(); // el pedido puede dejar de coincidir con el filtro
     renderDashboard();
+    actualizarBadge();
+  }
+
+  // Desde el dashboard: abre Pedidos ya filtrado por estado, y marca el pedido si se pidió uno.
+  function irAPedidos(estado, id) {
+    activarPanel(document.getElementById("tab-pedidos"), false);
+    elBuscar.value = "";
+    elFiltroEstado.value = estado && ESTADOS.includes(estado) ? estado : "todos";
+    elFiltroCanal.value = "todos";
+    pedidosSucio = false;
     renderPedidos();
-  };
+    const rows = elPedidosTbody.querySelectorAll("tr[data-pedido-id]");
+    let fila = null;
+    for (let i = 0; i < rows.length; i++) if (id && rows[i].dataset.pedidoId === String(id)) fila = rows[i];
+    if (fila) {
+      const sinMov = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      fila.scrollIntoView({ behavior: sinMov ? "auto" : "smooth", block: "center" });
+      fila.classList.add("flash");
+      setTimeout(() => fila.classList.remove("flash"), 1800);
+      const b = fila.querySelector(".btn-detalle");
+      if (b) b.focus({ preventScroll: true });
+    } else {
+      elFiltroEstado.focus({ preventScroll: true });
+      window.scrollTo(0, 0);
+    }
+  }
+  window.stratoAdminVerPedido = function (id) { irAPedidos("nuevo", id); }; // compatibilidad con la versión anterior
+
+  /* ============ VENTA MANUAL ============ */
+  const elVentaBody = document.getElementById("venta-body");
+  const elVentaToggle = document.getElementById("venta-toggle");
+  const elVentaItems = document.getElementById("venta-items");
+  const elVentaError = document.getElementById("venta-error");
+  let ventaOpc = [];
+  let ventaGuardando = false;
+
+  function armarOpcionesVenta() {
+    ventaOpc = [];
+    productosCache.filter((p) => p.activo !== false).forEach((p) => {
+      const tams = Array.isArray(p.tamanos) ? p.tamanos : [];
+      const costoDe = (tam) => (costosMap.has(claveCosto(p.id, tam || "")) ? costosMap.get(claveCosto(p.id, tam || "")) : null);
+      if (tams.length) tams.forEach((t) => ventaOpc.push({ pid: p.id, nombre: p.nombre, tam: t.nombre || null, precio: t.precio, costo: costoDe(t.nombre || "") }));
+      else ventaOpc.push({ pid: p.id, nombre: p.nombre, tam: null, precio: p.precio, costo: costoDe("") });
+    });
+  }
+  function opcionesVentaHtml() {
+    return (
+      '<option value="">Elegir producto…</option>' +
+      ventaOpc
+        .map((o, i) => "<option value=\"" + i + "\">" + escHtml(o.nombre + (o.tam ? " — " + o.tam : "") + (o.precio !== null && o.precio !== undefined ? " · " + fmtMoney(num(o.precio)) : "")) + "</option>")
+        .join("") +
+      '<option value="otro">Otro (escribir el nombre)</option>'
+    );
+  }
+
+  function agregarFilaVenta() {
+    const div = document.createElement("div");
+    div.className = "venta-row";
+    div.innerHTML =
+      '<label class="vf vf-prod"><span class="vf-t">Producto</span><select class="venta-prod" aria-label="Producto">' + opcionesVentaHtml() + "</select></label>" +
+      '<label class="vf"><span class="vf-t">Cant.</span><input type="number" class="venta-qty" aria-label="Cantidad" min="1" step="1" value="1" inputmode="numeric"></label>' +
+      '<label class="vf"><span class="vf-t">Precio c/u</span><input type="number" class="venta-precio" aria-label="Precio por unidad, en pesos" min="0" step="1" placeholder="Precio c/u" inputmode="numeric"></label>' +
+      '<label class="vf"><span class="vf-t">Costo c/u</span><input type="number" class="venta-costo" aria-label="Costo por unidad, en pesos (privado)" min="0" step="0.01" placeholder="Costo c/u" inputmode="decimal"></label>' +
+      '<button type="button" class="row-del venta-del" aria-label="Quitar este producto">✕</button>' +
+      '<input type="text" class="venta-otro" aria-label="Nombre del producto" maxlength="80" placeholder="Nombre del producto" hidden>';
+    elVentaItems.appendChild(div);
+    return div;
+  }
+
+  function filasVenta() {
+    return Array.from(elVentaItems.querySelectorAll(".venta-row")).map((row) => ({
+      row: row,
+      sel: row.querySelector(".venta-prod"),
+      qty: row.querySelector(".venta-qty"),
+      precio: row.querySelector(".venta-precio"),
+      costo: row.querySelector(".venta-costo"),
+      otro: row.querySelector(".venta-otro"),
+    }));
+  }
+
+  function actualizarTotalVenta() {
+    let total = 0, costo = 0, filas = 0, sinCosto = 0;
+    const lista = filasVenta();
+    lista.forEach((f) => {
+      const q = Number(f.qty.value), p = Number(f.precio.value);
+      if (Number.isFinite(q) && Number.isFinite(p) && q > 0 && p >= 0 && f.precio.value !== "") {
+        total += q * p;
+        filas++;
+        const c = f.costo.value === "" ? NaN : Number(f.costo.value);
+        if (Number.isFinite(c) && c >= 0) costo += q * c;
+        else sinCosto++;
+      }
+    });
+    document.getElementById("venta-total").textContent = fmtMoney(total);
+    const lin = document.getElementById("venta-costo-linea");
+    if (!filas) {
+      lin.innerHTML = "";
+    } else if (sinCosto === filas) {
+      lin.textContent = "Sin costo cargado: esta venta va a contar sin costo en la ganancia neta.";
+    } else {
+      const gan = total - costo;
+      lin.innerHTML =
+        "Costo <strong>" + fmtMoney(costo) + "</strong> · Ganancia <span class=\"" + (gan >= 0 ? "pos" : "neg") + "\">" + fmtMoney(gan) + "</span>" +
+        (total > 0 ? " (" + Math.round((gan / total) * 100) + "%)" : "") +
+        (sinCosto ? " · faltan costos en " + sinCosto + (sinCosto === 1 ? " producto" : " productos") : "");
+    }
+    // Si viene de una cotización: cuánto se está cobrando respecto de lo sugerido
+    const dif = document.getElementById("venta-origen-diff");
+    if (dif && ventaOrigen && lista.length) {
+      const p0 = lista[0].precio.value === "" ? NaN : Number(lista[0].precio.value);
+      if (!Number.isFinite(p0)) dif.textContent = "";
+      else {
+        const d = p0 - ventaOrigen.sugerido;
+        const pc = ventaOrigen.sugerido > 0 ? Math.round((Math.abs(d) / ventaOrigen.sugerido) * 100) : 0;
+        dif.textContent = d === 0 ? "Cobrás justo lo sugerido." : "Cobrás " + fmtMoney(Math.abs(d)) + (d > 0 ? " más" : " menos") + " que lo sugerido" + (ventaOrigen.sugerido > 0 ? " (" + (d > 0 ? "+" : "−") + pc + "%)" : "") + ".";
+      }
+    }
+    return total;
+  }
+
+  elVentaItems.addEventListener("change", (e) => {
+    const sel = e.target.closest(".venta-prod");
+    if (!sel) return;
+    const row = sel.closest(".venta-row");
+    const otro = row.querySelector(".venta-otro");
+    const precio = row.querySelector(".venta-precio");
+    if (sel.value === "otro") {
+      otro.hidden = false;
+      otro.focus();
+    } else {
+      otro.hidden = true;
+      otro.value = "";
+      const o = ventaOpc[Number(sel.value)];
+      if (o) {
+        precio.value = o.precio !== null && o.precio !== undefined && Number.isFinite(Number(o.precio)) ? String(Number(o.precio)) : "";
+        row.querySelector(".venta-costo").value = o.costo !== null && o.costo !== undefined ? String(o.costo) : "";
+      }
+    }
+    delete row.dataset.cot; // si cambia el producto, ya no es el de la cotización
+    actualizarTotalVenta();
+  });
+  elVentaItems.addEventListener("input", actualizarTotalVenta);
+  elVentaItems.addEventListener("click", (e) => {
+    const del = e.target.closest(".venta-del");
+    if (!del) return;
+    const row = del.closest(".venta-row");
+    if (elVentaItems.querySelectorAll(".venta-row").length > 1) row.remove();
+    else {
+      row.querySelector(".venta-prod").value = "";
+      row.querySelector(".venta-qty").value = "1";
+      row.querySelector(".venta-precio").value = "";
+      row.querySelector(".venta-costo").value = "";
+      row.querySelector(".venta-otro").hidden = true;
+      row.querySelector(".venta-otro").value = "";
+      delete row.dataset.cot;
+    }
+    actualizarTotalVenta();
+  });
+  document.getElementById("venta-add-item").addEventListener("click", () => {
+    const row = agregarFilaVenta();
+    row.querySelector(".venta-prod").focus();
+  });
+
+  function mostrarOrigenVenta() {
+    const box = document.getElementById("venta-origen");
+    if (!ventaOrigen) { box.hidden = true; box.innerHTML = ""; return; }
+    const previo = pedidosCache.find((p) => p.estado !== "cancelado" && (p.items || []).some((it) => it && it.cotizacion_id === ventaOrigen.id));
+    box.innerHTML =
+      '<div class="vo-txt"><strong>Desde la cotización «' + escHtml(ventaOrigen.nombre) + "»</strong><br>" +
+      "Sugerido: " + fmtMoney(ventaOrigen.sugerido) + (ventaOrigen.costo !== null ? " · Costo: " + fmtMoney(ventaOrigen.costo) + (ventaOrigen.accesorio ? " (incluye el accesorio de " + fmtMoney(ventaOrigen.accesorio) + ")" : "") : "") +
+      ". Cambiá el precio por unidad si querés cobrar otro valor." +
+      (previo ? "<br>Ojo: esta cotización ya se cargó como pedido el " + fmtDMY(previo._dia) + "." : "") +
+      '<span class="vo-diff" id="venta-origen-diff"></span></div>' +
+      '<button type="button" class="btn-soft" id="venta-usar-sugerido">Volver al sugerido</button>';
+    box.hidden = false;
+  }
+  document.getElementById("venta-origen").addEventListener("click", (e) => {
+    if (!e.target.closest("#venta-usar-sugerido") || !ventaOrigen) return;
+    const f = filasVenta()[0];
+    if (f) { f.precio.value = String(ventaOrigen.sugerido); actualizarTotalVenta(); }
+  });
+
+  function resetVenta() {
+    ventaOrigen = null;
+    mostrarOrigenVenta();
+    document.getElementById("form-venta").reset();
+    document.getElementById("venta-fecha").value = todayStr();
+    document.getElementById("venta-estado").value = "entregado";
+    document.getElementById("venta-canal").value = "instagram";
+    elVentaError.textContent = "";
+    armarOpcionesVenta();
+    elVentaItems.innerHTML = "";
+    agregarFilaVenta();
+    actualizarTotalVenta();
+  }
+  function cerrarVenta() {
+    elVentaBody.hidden = true;
+    elVentaToggle.setAttribute("aria-expanded", "false");
+    elVentaToggle.textContent = "+ Cargar una venta";
+  }
+  function abrirVenta() {
+    activarPanel(document.getElementById("tab-pedidos"), false);
+    if (elVentaBody.hidden) {
+      resetVenta();
+      elVentaBody.hidden = false;
+      elVentaToggle.setAttribute("aria-expanded", "true");
+      elVentaToggle.textContent = "Cerrar";
+    }
+    document.getElementById("venta-cliente").focus({ preventScroll: true });
+    elVentaBody.scrollIntoView({ behavior: "auto", block: "start" });
+  }
+  // "Cargar como pedido": abre el formulario de venta con la cotización ya puesta (precio sugerido y costo base editables).
+  function abrirVentaDesdeCotizacion(id) {
+    const c = cotizacionesCache.find((x) => x.id === id);
+    if (!c) return;
+    if (!elVentaBody.hidden) {
+      const hayAlgo = document.getElementById("venta-cliente").value.trim() !== "" || filasVenta().some((f) => f.precio.value !== "");
+      if (hayAlgo && !confirm("Ya tenés una venta a medio cargar. ¿Reemplazarla por esta cotización?")) return;
+    }
+    const sugerido = Math.round(num(c.total_a_cobrar));
+    const cb = costoDeCotizacion(c);
+    activarPanel(document.getElementById("tab-pedidos"), false);
+    resetVenta();
+    ventaOrigen = { id: c.id, nombre: String(c.nombre_pieza || "Pieza"), sugerido: sugerido, costo: cb, accesorio: accesorioDeCotizacion(c) };
+    mostrarOrigenVenta();
+    elVentaBody.hidden = false;
+    elVentaToggle.setAttribute("aria-expanded", "true");
+    elVentaToggle.textContent = "Cerrar";
+    document.getElementById("venta-cliente").value = limpiarTexto(c.cliente || "", 80);
+    document.getElementById("venta-estado").value = "confirmado";
+    const f = filasVenta()[0];
+    f.sel.value = "otro";
+    f.otro.hidden = false;
+    f.otro.value = limpiarTexto(ventaOrigen.nombre, 80);
+    f.qty.value = "1";
+    f.precio.value = String(sugerido);
+    f.costo.value = cb === null ? "" : String(cb);
+    f.row.dataset.cot = c.id;
+    actualizarTotalVenta();
+    elVentaBody.scrollIntoView({ behavior: "auto", block: "start" });
+    (document.getElementById("venta-cliente").value ? f.precio : document.getElementById("venta-cliente")).focus({ preventScroll: true });
+  }
+
+  elVentaToggle.addEventListener("click", () => {
+    if (elVentaBody.hidden) abrirVenta();
+    else cerrarVenta();
+  });
+  document.getElementById("venta-cancelar").addEventListener("click", () => {
+    cerrarVenta();
+    elVentaToggle.focus();
+  });
+
+  function limpiarTexto(v, max) {
+    return String(v || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  }
+
+  document.getElementById("form-venta").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (ventaGuardando) return;
+    elVentaError.textContent = "";
+    const falla = (texto, campo) => {
+      elVentaError.textContent = texto;
+      if (campo) campo.focus();
+      return null;
+    };
+
+    const canal = document.getElementById("venta-canal").value;
+    const estado = document.getElementById("venta-estado").value;
+    const fecha = document.getElementById("venta-fecha").value;
+    const cliente = limpiarTexto(document.getElementById("venta-cliente").value, 80);
+    const contacto = limpiarTexto(document.getElementById("venta-contacto").value, 40);
+    if (!CANALES.includes(canal) || canal === "web") return falla("Elegí el canal de la venta.", document.getElementById("venta-canal"));
+    if (!ESTADOS.includes(estado)) return falla("Elegí un estado.", document.getElementById("venta-estado"));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return falla("Falta la fecha de la venta.", document.getElementById("venta-fecha"));
+    if (fecha > todayStr()) return falla("La fecha de la venta no puede ser futura.", document.getElementById("venta-fecha"));
+    if (!cliente) return falla("Falta el nombre del cliente.", document.getElementById("venta-cliente"));
+
+    const items = [];
+    const filas = filasVenta();
+    for (let i = 0; i < filas.length; i++) {
+      const f = filas[i];
+      const n = i + 1;
+      let nombre, tam = null, pid = null;
+      if (f.sel.value === "otro") {
+        nombre = limpiarTexto(f.otro.value, 80);
+        if (!nombre) return falla("Producto " + n + ": escribí el nombre.", f.otro);
+      } else {
+        const o = ventaOpc[Number(f.sel.value)];
+        if (f.sel.value === "" || !o) return falla("Producto " + n + ": elegí un producto (o \"Otro\" para escribirlo).", f.sel);
+        nombre = o.nombre;
+        tam = o.tam;
+        pid = o.pid;
+      }
+      const qty = Number(f.qty.value);
+      if (!Number.isInteger(qty) || qty < 1 || qty > 9999) return falla("Producto " + n + ": la cantidad tiene que ser un número entero desde 1.", f.qty);
+      if (f.precio.value === "") return falla("Producto " + n + ": falta el precio por unidad.", f.precio);
+      const precio = Number(f.precio.value);
+      if (!Number.isFinite(precio) || precio < 0 || precio > 1000000) return falla("Producto " + n + ": el precio no es válido.", f.precio);
+      // Costo por unidad (opcional, privado): queda guardado en el ítem y alimenta la ganancia neta del dashboard.
+      let costo = null;
+      if (f.costo.value !== "") {
+        costo = Number(f.costo.value);
+        if (!Number.isFinite(costo) || costo < 0 || costo > 1000000) return falla("Producto " + n + ": el costo no es válido.", f.costo);
+        costo = redondear2(costo);
+      }
+      const item = { producto_id: pid, nombre: nombre, tamano: tam, qty: qty, color: null, nota: null, precio: precio, precio_lista: precio, descuento_cantidad_pct: 0, costo: costo };
+      if (f.row.dataset.cot) item.cotizacion_id = f.row.dataset.cot;
+      items.push(item);
+    }
+    if (!items.length) return falla("Agregá al menos un producto.", null);
+    const subtotal = items.reduce((s, it) => s + it.qty * it.precio, 0);
+
+    const payload = {
+      cliente_nombre: cliente,
+      cliente_telefono: contacto || "—",
+      cliente_email: null,
+      entrega: document.getElementById("venta-entrega").value,
+      direccion: null,
+      pago: document.getElementById("venta-pago").value || null,
+      notas: limpiarTexto(document.getElementById("venta-notas").value, 300) || null,
+      items: items,
+      subtotal: subtotal,
+      estado: estado,
+      canal: canal,
+    };
+    // Una venta de hoy se guarda con la hora actual (la pone la base); una de un día anterior, al mediodía de ese día en Uruguay.
+    if (fecha !== todayStr()) payload.created_at = fecha + "T12:00:00-03:00";
+
+    const btn = document.getElementById("venta-guardar");
+    ventaGuardando = true;
+    btn.disabled = true;
+    btn.textContent = "Guardando…";
+    let error = null;
+    try {
+      ({ error } = await stratoSb.from("pedidos").insert([payload]));
+    } catch (err) {
+      error = { message: err && err.message ? err.message : "error de conexión" };
+    }
+    ventaGuardando = false;
+    btn.disabled = false;
+    btn.textContent = "Guardar venta";
+    if (error) {
+      const txt = String(error.message || "") + " " + String(error.code || "");
+      if (/canal|row-level security|permission denied|42501|PGRST204/i.test(txt)) {
+        elVentaError.textContent = "Todavía falta correr supabase/migracion_dashboard.sql en Supabase (agrega el canal y el permiso para cargar ventas). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
+      } else {
+        elVentaError.textContent = "No se pudo guardar la venta: " + (error.message || "error desconocido") + ". Lo que cargaste sigue acá.";
+      }
+      return;
+    }
+
+    const desdeCot = ventaOrigen ? ventaOrigen.nombre : null;
+    resetVenta();
+    cerrarVenta();
+    await loadPedidos();
+    pedidosSucio = false;
+    elFiltroEstado.value = "todos";
+    elFiltroCanal.value = "todos";
+    elBuscar.value = "";
+    renderPedidos();
+    renderDashboard();
+    actualizarAvisosPedidos();
+    renderCotizaciones(); // la cotización de origen queda marcada como cargada
+    mostrarMsgPedidos("ok", "Venta guardada: " + cliente + " · " + fmtMoney(subtotal) + " · " + CANAL_LABEL[canal] + " · " + fmtDMY(fecha) + "." + (desdeCot ? " Cargada desde la cotización «" + desdeCot + "»." : ""));
+  });
 
   /* ============ PRODUCTOS ============ */
   document.getElementById("producto-form-toggle").addEventListener("click", () => {
@@ -431,6 +1756,25 @@
 
   document.getElementById("productos-buscar").addEventListener("input", renderProductos);
   document.getElementById("productos-filtro-categoria").addEventListener("change", renderProductos);
+  document.getElementById("productos-filtro-costo").addEventListener("change", renderProductos);
+
+  // Cuántos de los tamaños de un producto (o el producto solo, si no tiene tamaños) tienen costo cargado.
+  function costoDeProducto(p) {
+    const tams = (Array.isArray(p.tamanos) ? p.tamanos : []).filter((t) => String(t.nombre || "").trim() !== "");
+    const claves = tams.length ? tams.map((t) => String(t.nombre).trim()) : [""];
+    const vals = claves.map((k) => (costosMap.has(claveCosto(p.id, k)) ? costosMap.get(claveCosto(p.id, k)) : null)).filter((v) => v !== null);
+    return { total: claves.length, con: vals.length, min: vals.length ? Math.min.apply(null, vals) : null, max: vals.length ? Math.max.apply(null, vals) : null };
+  }
+
+  // Desde el dashboard: "Cargar costos" abre Productos mostrando solo los que les falta.
+  function irACostos() {
+    activarPanel(document.getElementById("tab-productos"), false);
+    document.getElementById("productos-filtro-costo").value = "sin";
+    document.getElementById("productos-buscar").value = "";
+    document.getElementById("productos-filtro-categoria").value = "todas";
+    renderProductos();
+    document.getElementById("productos-tbody").closest(".card").scrollIntoView({ behavior: "auto", block: "start" });
+  }
 
   function renderProductos() {
     const term = document.getElementById("productos-buscar").value.trim().toLowerCase();
@@ -439,9 +1783,14 @@
     let list = productosCache;
     if (catFiltro !== "todas") list = list.filter((p) => productoCategoriaIds(p).includes(catFiltro));
     if (term) list = list.filter((p) => p.nombre.toLowerCase().includes(term));
+    if (document.getElementById("productos-filtro-costo").value === "sin" && costosEstado.ok) {
+      list = list.filter((p) => { const c = costoDeProducto(p); return c.con < c.total; });
+    }
 
     const tbody = document.getElementById("productos-tbody");
-    document.getElementById("productos-empty").style.display = list.length ? "none" : "block";
+    const vacio = document.getElementById("productos-empty");
+    vacio.style.display = list.length ? "none" : "block";
+    vacio.textContent = productosCache.length && !list.length ? "Ningún producto coincide con el filtro." : "No hay productos todavía.";
 
     tbody.innerHTML = list
       .map((p) => {
@@ -459,6 +1808,7 @@
           "</td><td>" +
           escHtml(p.nombre) +
           (extras.length ? "<br><span class='muted' style='font-size:11px;'>" + extras.join(" · ") + "</span>" : "") +
+          costoResumenHtml(p) +
           "</td><td>" +
           (productoCategoriaNombres(p) || "—") +
           "</td><td>" +
@@ -479,6 +1829,15 @@
       .join("");
   }
 
+  function costoResumenHtml(p) {
+    if (!costosEstado.ok) return "";
+    const c = costoDeProducto(p);
+    if (c.con === 0) return '<br><span class="badge-sc">sin costo</span>';
+    const rango = c.min === c.max ? fmtMoney(c.min) : fmtMoney(c.min) + " a " + fmtMoney(c.max);
+    if (c.con < c.total) return '<br><span class="badge-sc">costo en ' + c.con + " de " + c.total + " tamaños</span>";
+    return "<br><span class='muted' style='font-size:12px;'>Costo " + rango + "</span>";
+  }
+
   window.stratoAdminToggleActivo = async function (id, activo) {
     const { error } = await stratoSb.from("productos").update({ activo }).eq("id", id);
     if (error) { alert("No se pudo actualizar: " + error.message); return; }
@@ -491,6 +1850,7 @@
     const { error } = await stratoSb.from("productos").delete().eq("id", id);
     if (error) { alert("No se pudo eliminar: " + error.message); return; }
     await loadProductos();
+    await loadCostos(); // sus costos se borran solos junto con el producto
     renderProductos();
   };
 
@@ -511,7 +1871,11 @@
     prodColores = (p.colores || []).slice();
     prodImagenes = (p.imagenes || []).slice();
     prodCategoriaIds = productoCategoriaIds(p);
-    prodTamanos = (Array.isArray(p.tamanos) ? p.tamanos : []).map((t) => ({ nombre: t.nombre || "", precio: t.precio }));
+    prodTamanos = (Array.isArray(p.tamanos) ? p.tamanos : []).map((t) => ({
+      nombre: t.nombre || "", precio: t.precio,
+      costo: costosMap.has(claveCosto(p.id, t.nombre || "")) ? costosMap.get(claveCosto(p.id, t.nombre || "")) : "",
+    }));
+    prodCostoBase = costosMap.has(claveCosto(p.id, "")) ? costosMap.get(claveCosto(p.id, "")) : "";
     prodEscalones = (Array.isArray(p.escalones_propios) ? p.escalones_propios : []).map((t) => ({ desde: t.desde, descuento_pct: t.descuento_pct }));
     document.getElementById("prod-por-cantidad").checked = !!p.venta_por_cantidad;
     document.getElementById("prod-escalones-propios").checked = Array.isArray(p.escalones_propios) && p.escalones_propios.length > 0;
@@ -543,6 +1907,7 @@
     prodImagenes = [];
     prodCategoriaIds = [];
     prodTamanos = [];
+    prodCostoBase = "";
     prodEscalones = [];
     renderProdTamanos();
     renderProdEscalones();
@@ -937,6 +2302,19 @@
       tamanos.push({ nombre: nombreT, precio: precioT });
     }
 
+    // Costos de fabricación (privados): una fila por tamaño con nombre, o una sola "Por unidad". Vacío = sin costo cargado.
+    const filasCosto = [];
+    for (const r of filasCostoProd()) {
+      const v = r.val;
+      if (v === "" || v === null || v === undefined) { filasCosto.push({ tamano: r.key, costo: null }); continue; }
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0 || n > COSTO_MAX) {
+        errEl.textContent = "El costo de \"" + r.label + "\" no es válido (tiene que ser un número desde 0).";
+        return;
+      }
+      filasCosto.push({ tamano: r.key, costo: redondear2(n) });
+    }
+
     // Escalones propios (solo si el producto se vende por cantidad y eligió no usar la tabla general).
     const porCantidad = document.getElementById("prod-por-cantidad").checked;
     let escalonesPropios = null;
@@ -1005,15 +2383,31 @@
       if (!error && data && data[0]) productoId = data[0].id;
     }
     if (error) { errEl.textContent = error.message; return; }
+    if (productoId) editingProductId = productoId; // si algo falla de acá en más, volver a guardar actualiza este mismo producto
 
     if (productoId) {
       const { error: catError } = await syncProductoCategorias(productoId, prodCategoriaIds);
       if (catError) { errEl.textContent = "Producto guardado, pero falló vincular categorías: " + catError.message; return; }
+
+      const rc = await syncProductoCostos(productoId, filasCosto);
+      if (rc.error) {
+        errEl.textContent = "Producto guardado, pero no se pudieron guardar los costos: " + rc.error.message + ". Volvé a guardar para reintentar.";
+        await loadProductos();
+        renderProductos();
+        return;
+      }
+      if (rc.skipped && filasCosto.some((f) => f.costo !== null)) {
+        errEl.textContent = "Producto guardado, pero los costos todavía no se pueden guardar: falta correr supabase/migracion_dashboard.sql en Supabase. Cuando lo corras, volvé a guardar este producto.";
+        await loadProductos();
+        renderProductos();
+        return;
+      }
     }
 
     await loadProductos();
     renderProductos();
     resetProductForm();
+    renderDashboard(); // los costos nuevos cambian la ganancia estimada
   });
 
   /* Reemplaza los vínculos producto-categoría por la lista actual (borra e inserta de nuevo). */
@@ -1344,10 +2738,12 @@
       )
       .join("");
     syncPrecioDesdeTamanos();
+    renderProdCostos();
   }
   window.stratoAdminTamanoSet = function (i, key, value) {
     if (prodTamanos[i]) prodTamanos[i][key] = value;
     syncPrecioDesdeTamanos();
+    if (key === "nombre") renderProdCostos(); // las filas de costo siguen a los nombres de los tamaños
   };
   window.stratoAdminTamanoDel = function (i) {
     prodTamanos.splice(i, 1);
@@ -1357,6 +2753,81 @@
     prodTamanos.push({ nombre: "", precio: "" });
     renderProdTamanos();
   });
+
+  /* ---- Costo de fabricación del producto en edición (privado) ---- */
+  // Una fila por tamaño con nombre; si el producto no tiene tamaños, una sola fila "Por unidad".
+  function filasCostoProd() {
+    const nombrados = [];
+    prodTamanos.forEach((t, i) => { if (String(t.nombre || "").trim() !== "") nombrados.push({ idx: i, key: String(t.nombre).trim(), label: String(t.nombre).trim(), val: t.costo }); });
+    return nombrados.length ? nombrados : [{ idx: -1, key: "", label: "Por unidad", val: prodCostoBase }];
+  }
+
+  function renderProdCostos() {
+    const wrap = document.getElementById("prod-costos-rows");
+    const note = document.getElementById("prod-costos-note");
+    const sinTabla = costosEstado.intento && !costosEstado.ok;
+    note.hidden = !sinTabla;
+    note.textContent = !sinTabla ? "" : costosEstado.falta
+      ? "Para guardar costos falta correr supabase/migracion_dashboard.sql en Supabase (SQL Editor). Mientras tanto, el producto se guarda normal pero sin costo."
+      : "No se pudieron leer los costos (" + costosEstado.error + "). Si guardás ahora, los costos no se tocan.";
+    const opciones =
+      '<option value="">Usar cotización…</option>' +
+      cotizacionesCache
+        .filter((c) => costoDeCotizacion(c) !== null)
+        .map((c) => '<option value="' + escAttr(c.id) + '">' + escHtml(c.nombre_pieza) + " — " + fmtMoney(costoDeCotizacion(c)) + "</option>")
+        .join("");
+    const dis = sinTabla ? " disabled" : "";
+    wrap.innerHTML = filasCostoProd()
+      .map((r) =>
+        '<div class="cost-row"><span class="cost-lbl">' + escHtml(r.label) + "</span>" +
+        '<input type="number" class="cost-in" data-idx="' + r.idx + '" min="0" step="0.01" placeholder="Costo $U" inputmode="decimal" aria-label="Costo de fabricación de ' +
+        escAttr(r.label) + ' (privado)" value="' + escAttr(r.val === undefined || r.val === null ? "" : r.val) + '"' + dis + ">" +
+        '<select class="cost-cot" data-idx="' + r.idx + '" aria-label="Traer el costo de una cotización para ' + escAttr(r.label) + '"' + dis + ">" + opciones + "</select></div>"
+      )
+      .join("");
+  }
+
+  function fijarCostoProd(idx, valor) {
+    if (idx === -1) prodCostoBase = valor;
+    else if (prodTamanos[idx]) prodTamanos[idx].costo = valor;
+  }
+  document.getElementById("prod-costos-rows").addEventListener("input", (e) => {
+    const inp = e.target.closest(".cost-in");
+    if (inp) fijarCostoProd(Number(inp.dataset.idx), inp.value);
+  });
+  document.getElementById("prod-costos-rows").addEventListener("change", (e) => {
+    const sel = e.target.closest(".cost-cot");
+    if (!sel || !sel.value) return;
+    const c = cotizacionesCache.find((x) => x.id === sel.value);
+    sel.value = "";
+    const v = costoDeCotizacion(c);
+    if (v === null) return;
+    const idx = Number(sel.dataset.idx);
+    fijarCostoProd(idx, String(v));
+    const inp = sel.closest(".cost-row").querySelector(".cost-in");
+    if (inp) inp.value = String(v);
+  });
+
+  // Guarda los costos del producto: crea o actualiza los que tienen valor y borra los que se vaciaron o ya no existen.
+  async function syncProductoCostos(productoId, filas) {
+    if (!costosEstado.ok) return { skipped: true, error: null };
+    const nuevas = filas.filter((f) => f.costo !== null).map((f) => ({ producto_id: productoId, tamano: f.tamano, costo: f.costo, updated_at: new Date().toISOString() }));
+    const quedan = new Set(nuevas.map((n) => n.tamano));
+    const prefijo = String(productoId) + "|";
+    const viejas = [];
+    costosMap.forEach((v, k) => { if (k.indexOf(prefijo) === 0) viejas.push(k.slice(prefijo.length)); });
+    if (nuevas.length) {
+      const { error } = await stratoSb.from("producto_costos").upsert(nuevas, { onConflict: "producto_id,tamano" });
+      if (error) return { error: error };
+    }
+    for (const t of viejas) {
+      if (quedan.has(t)) continue;
+      const { error } = await stratoSb.from("producto_costos").delete().eq("producto_id", productoId).eq("tamano", t);
+      if (error) return { error: error };
+    }
+    await loadCostos();
+    return { error: null };
+  }
 
   function renderProdEscalones() {
     document.getElementById("prod-escalones-rows").innerHTML = prodEscalones
@@ -1523,6 +2994,7 @@
     const { error } = await stratoSb.from("gastos").delete().eq("id", id);
     if (error) { alert("No se pudo eliminar: " + error.message); return; }
     gastosCache = gastosCache.filter((g) => g.id !== id);
+    gastosAll = gastosAll.filter((g) => g.id !== id);
     renderGastos();
     renderDashboard();
   };
@@ -1547,6 +3019,7 @@
     document.getElementById("gasto-fecha").value = todayStr();
     await loadGastos(document.getElementById("gastos-desde").value, document.getElementById("gastos-hasta").value);
     renderGastos();
+    await loadGastosTodos().catch(() => false);
     renderDashboard();
   });
 
@@ -1804,12 +3277,13 @@
   });
 
   /* ---- Guardar cotización ---- */
-  document.getElementById("calc-guardar-btn").addEventListener("click", async () => {
+  // Guarda (o actualiza, si se está editando una) la cotización del formulario. Devuelve su id, o null si no se pudo.
+  async function guardarCotizacion() {
     const errEl = document.getElementById("calc-error");
     errEl.textContent = "";
     const nombrePieza = document.getElementById("calc-nombre-pieza").value.trim();
-    if (!nombrePieza) { errEl.textContent = "Poné un nombre para la pieza antes de guardar."; return; }
-    if (!requireSb()) return;
+    if (!nombrePieza) { errEl.textContent = "Poné un nombre para la pieza antes de guardar."; return null; }
+    if (!requireSb()) return null;
 
     const r = calcularCosto();
     const maquinaSel = document.getElementById("calc-maquina");
@@ -1850,13 +3324,16 @@
       total_a_cobrar: r.totalACobrar,
     };
 
-    let error;
+    let error, cotId = editingCotizacionId;
     if (editingCotizacionId) {
       ({ error } = await stratoSb.from("cotizaciones").update(payload).eq("id", editingCotizacionId));
     } else {
-      ({ error } = await stratoSb.from("cotizaciones").insert([payload]));
+      let data;
+      ({ data, error } = await stratoSb.from("cotizaciones").insert([payload]).select());
+      cotId = data && data[0] ? data[0].id : null;
     }
-    if (error) { errEl.textContent = error.message; return; }
+    if (error) { errEl.textContent = error.message; return null; }
+    if (!cotId) { errEl.textContent = "La cotización se guardó, pero no se pudo abrir el pedido: buscala en el historial y tocá \"Cargar como pedido\"."; }
 
     editingCotizacionId = null;
     document.getElementById("calc-guardar-btn").textContent = "Guardar cotización";
@@ -1864,26 +3341,52 @@
 
     await loadCotizaciones();
     renderCotizaciones();
+    return cotId;
+  }
+
+  document.getElementById("calc-guardar-btn").addEventListener("click", () => { guardarCotizacion(); });
+
+  // Guardar y, de una, cargarla como pedido (con el total sugerido y el costo base ya puestos).
+  document.getElementById("calc-pedido-btn").addEventListener("click", async () => {
+    const btn = document.getElementById("calc-pedido-btn");
+    btn.disabled = true;
+    try {
+      const id = await guardarCotizacion();
+      if (id) abrirVentaDesdeCotizacion(id);
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   function renderCotizaciones() {
     const tbody = document.getElementById("cotizaciones-tbody");
     document.getElementById("cotizaciones-empty").style.display = cotizacionesCache.length ? "none" : "block";
+    // Cotizaciones que ya se cargaron como pedido (un pedido cancelado no cuenta)
+    const cargadas = new Map();
+    pedidosCache.forEach((p) => {
+      if (p.estado === "cancelado") return;
+      (p.items || []).forEach((it) => { if (it && it.cotizacion_id && !cargadas.has(it.cotizacion_id)) cargadas.set(it.cotizacion_id, p); });
+    });
     tbody.innerHTML = cotizacionesCache
       .map((c) => {
         const gp = c.resultados && c.resultados.ganancia_pct != null ? c.resultados.ganancia_pct.toFixed(1) + "%" : "—";
         const costoBase = c.resultados && c.resultados.costo_base != null ? fmtMoney(c.resultados.costo_base) : "—";
+        const ped = cargadas.get(c.id);
         return (
-          "<tr><td>" + fmtFecha(c.created_at) + "</td><td>" + escHtml(c.nombre_pieza) + "</td><td>" +
+          "<tr><td>" + fmtFecha(c.created_at) + "</td><td>" + escHtml(c.nombre_pieza) +
+          (ped ? '<span class="cot-cargada">Cargada como pedido (' + escHtml(ped.cliente_nombre) + ", " + fmtDMY(ped._dia) + ")</span>" : "") + "</td><td>" +
           escHtml(c.cliente || "—") + "</td><td>" + escHtml(c.maquina_nombre || "—") + "</td><td>" +
           costoBase + "</td><td>" + fmtMoney(c.total_a_cobrar) + "</td><td>" + gp +
-          "</td><td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarCotizacion('" +
+          "</td><td><button type='button' class='btn btn-small' onclick=\"stratoAdminCotizacionAPedido('" +
+          c.id + "')\">Cargar como pedido</button> <button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarCotizacion('" +
           c.id + "')\">Editar</button> <button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarCotizacion('" +
           c.id + "')\">Eliminar</button></td></tr>"
         );
       })
       .join("");
   }
+
+  window.stratoAdminCotizacionAPedido = function (id) { abrirVentaDesdeCotizacion(id); };
 
   window.stratoAdminEditarCotizacion = function (id) {
     const c = cotizacionesCache.find((x) => x.id === id);

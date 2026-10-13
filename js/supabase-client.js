@@ -133,21 +133,46 @@ async function stratoLoadLiveCatalog() {
 }
 
 /**
- * Inserta un pedido en Supabase cuando se confirma el checkout. Es
- * "best effort": si Supabase no está configurado o falla la escritura, no
- * interrumpe el flujo de WhatsApp — el pedido igual llega por ese medio.
+ * Guarda el pedido cuando se confirma el checkout. Es "best effort": si falla,
+ * no interrumpe el flujo de WhatsApp / Mercado Pago — el pedido igual llega por esos medios.
+ *
+ * Ya NO se inserta directo en Supabase desde el navegador (así cualquiera podía cargar pedidos
+ * falsos): se manda a la función /api/crear-pedido, que recalcula los precios con los datos reales
+ * y guarda el pedido desde el servidor. Acá solo viajan qué producto / tamaño / color / cantidad /
+ * nota se pidió y los datos de contacto: lo demás (precios, subtotal, estado) se decide allá.
  */
 async function stratoInsertPedido(pedido) {
-  if (!stratoSb) return { ok: false, reason: "not-configured" };
   try {
-    const { error } = await stratoSb.from("pedidos").insert([pedido]);
-    if (error) {
-      console.warn("Strato: no se pudo guardar el pedido en Supabase.", error);
-      return { ok: false, reason: error.message };
+    const body = {
+      cart: (pedido.items || []).map((i) => ({
+        id: i.producto_id,
+        size: i.tamano || null,
+        color: i.color || null,
+        qty: i.qty,
+        nota: i.nota || null,
+      })),
+      cliente_nombre: pedido.cliente_nombre,
+      cliente_telefono: pedido.cliente_telefono,
+      cliente_email: pedido.cliente_email || null,
+      entrega: pedido.entrega,
+      direccion: pedido.direccion || null,
+      notas: pedido.notas || null,
+      pago: pedido.pago || null,
+    };
+    const resp = await fetch("/api/crear-pedido", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || !data.ok) {
+      const reason = (data && (data.error || data.code)) || "error " + resp.status;
+      console.warn("Strato: no se pudo guardar el pedido.", reason);
+      return { ok: false, reason: reason };
     }
-    return { ok: true };
+    return { ok: true, id: data.id || null };
   } catch (e) {
-    console.warn("Strato: error guardando el pedido en Supabase.", e);
+    console.warn("Strato: error guardando el pedido.", e);
     return { ok: false, reason: String(e) };
   }
 }
