@@ -3033,11 +3033,13 @@
      desgaste_maquina  = (costo_reposicion / vida_util_horas) * horas_uso
      margen_error_monto = margen_error_pct * (material + electricidad + desgaste + acabados)
      costo_base        = material + electricidad + desgaste + acabados + margen_error_monto
-     total_a_cobrar     = costo_base * margen_ganancia + accesorio_adicional
-     ganancia_neta      = total_a_cobrar - costo_base
+     total_a_cobrar     = costo_base * margen_ganancia + accesorio_adicional * margen_accesorio   (margen_accesorio = 1: se cobra al costo)
+     costo_total        = costo_base + accesorio_adicional
+     ganancia_neta      = total_a_cobrar - costo_total
    El "accesorio adicional" NO entra en costo_base ni en el margen de error:
-   se suma al final, sin llevar margen de ganancia (es guita que sale del
-   bolsillo tal cual, ej. un herraje comprado para esa pieza puntual).
+   se suma aparte (es guita que sale del bolsillo tal cual, ej. un herraje comprado
+   para esa pieza puntual). Por defecto se cobra al costo (margen_accesorio = 1);
+   con un margen mayor se le suma ganancia. Cuenta como costo de la pieza.
   */
   function calcularCosto() {
     const potenciaW = numVal("calc-potencia");
@@ -3067,20 +3069,25 @@
     const margenGanancia = numVal("calc-margen-ganancia");
     const accesorio = numVal("calc-accesorio");
     const acabados = numVal("calc-acabados");
+    const rawMA = Number(document.getElementById("calc-margen-accesorio").value);
+    const margenAccesorio = Number.isFinite(rawMA) && rawMA >= 1 ? rawMA : 1; // 1 = el accesorio se cobra al costo
 
     const horasUso = horasImpresion + minutosAdicionales / 60;
     const costoElectricidad = ((potenciaW * horasUso) / 1000) * costoElectricidadKwh;
     const desgasteMaquina = (costoReposicion / vidaUtilHoras) * horasUso;
     const margenErrorMonto = margenErrorPct * (costoMaterial + costoElectricidad + desgasteMaquina + acabados);
     const costoBase = costoMaterial + costoElectricidad + desgasteMaquina + acabados + margenErrorMonto;
-    const totalACobrar = costoBase * margenGanancia + accesorio;
-    const gananciaNeta = totalACobrar - costoBase;
+    const accesorioCobrado = accesorio * margenAccesorio;
+    const costoTotal = costoBase + accesorio;
+    const totalACobrar = costoBase * margenGanancia + accesorioCobrado;
+    const gananciaNeta = totalACobrar - costoTotal;
     const gananciaPct = totalACobrar > 0 ? (gananciaNeta / totalACobrar) * 100 : 0;
 
     return {
       filamentos,
       potenciaW, vidaUtilHoras, costoReposicion, precioFilamento, costoElectricidadKwh,
       horasImpresion, minutosAdicionales, pesoGr, margenErrorPct, margenGanancia, accesorio, acabados,
+      margenAccesorio, accesorioCobrado, costoTotal,
       horasUso, costoMaterial, costoElectricidad, desgasteMaquina, margenErrorMonto,
       costoBase, totalACobrar, gananciaNeta, gananciaPct,
     };
@@ -3109,8 +3116,14 @@
     html += calcLinea("Desgaste máquina", "Amortización por " + r.vidaUtilHoras + " h", r.desgasteMaquina);
     html += calcLinea("Margen de error", "+" + Math.round(r.margenErrorPct * 100) + "% sobre costos", r.margenErrorMonto, "+");
     if (r.acabados) html += calcLinea("Insumos extra / acabado", null, r.acabados, "+");
-    if (r.accesorio) html += calcLinea("Accesorio adicional", "no lleva margen de ganancia", r.accesorio, "+");
     html += '<div class="calc-line-total"><div>Costo base</div><div>' + fmtMoney(r.costoBase) + "</div></div>";
+    if (r.accesorio) {
+      const subAcc = r.margenAccesorio > 1
+        ? "costo " + fmtMoney(r.accesorio) + " · lo cobrás a " + fmtMoney(r.accesorioCobrado) + " (margen " + r.margenAccesorio + "x)"
+        : "se cobra al costo, sin ganancia";
+      html += calcLinea("Accesorio adicional", subAcc, r.accesorio, "+");
+      html += '<div class="calc-line-total"><div>Costo total (con accesorio)</div><div>' + fmtMoney(r.costoTotal) + "</div></div>";
+    }
     html +=
       '<div class="calc-line-final"><div>Total a cobrar <span class="tag">margen ' +
       r.margenGanancia + "x</span></div><div>" + fmtMoney(r.totalACobrar) + "</div></div>";
@@ -3125,7 +3138,7 @@
   document
     .querySelectorAll(
       "#calc-potencia, #calc-vida-util, #calc-costo-reposicion, #calc-costo-electricidad, " +
-        "#calc-horas, #calc-minutos, #calc-margen-ganancia, #calc-accesorio, #calc-acabados"
+        "#calc-horas, #calc-minutos, #calc-margen-ganancia, #calc-accesorio, #calc-margen-accesorio, #calc-acabados"
     )
     .forEach((el) => el.addEventListener("input", renderResultados));
 
@@ -3269,6 +3282,7 @@
     document.getElementById("calc-margen-error-label").textContent = "35%";
     document.getElementById("calc-margen-ganancia").value = 2;
     document.getElementById("calc-accesorio").value = 0;
+    document.getElementById("calc-margen-accesorio").value = 1;
     document.getElementById("calc-acabados").value = 0;
     document.getElementById("calc-altura-capa").value = "0.20";
     document.getElementById("calc-relleno").value = 20;
@@ -3307,6 +3321,7 @@
         margen_error_pct: r.margenErrorPct,
         margen_ganancia: r.margenGanancia,
         costo_accesorio: r.accesorio,
+        margen_accesorio: r.margenAccesorio,
         costo_acabados: r.acabados,
         altura_capa: document.getElementById("calc-altura-capa").value,
         relleno_pct: numVal("calc-relleno"),
@@ -3318,6 +3333,7 @@
         desgaste_maquina: r.desgasteMaquina,
         margen_error_monto: r.margenErrorMonto,
         costo_base: r.costoBase,
+        costo_total: r.costoTotal,
         ganancia_neta: r.gananciaNeta,
         ganancia_pct: r.gananciaPct,
       },
@@ -3369,8 +3385,11 @@
     });
     tbody.innerHTML = cotizacionesCache
       .map((c) => {
-        const gp = c.resultados && c.resultados.ganancia_pct != null ? c.resultados.ganancia_pct.toFixed(1) + "%" : "—";
-        const costoBase = c.resultados && c.resultados.costo_base != null ? fmtMoney(c.resultados.costo_base) : "—";
+        // Costo total (base + accesorio) y ganancia sobre el total: se calculan igual para las cotizaciones viejas y las nuevas.
+        const ct = costoDeCotizacion(c);
+        const tot = num(c.total_a_cobrar);
+        const gp = ct !== null && tot > 0 ? (((tot - ct) / tot) * 100).toFixed(1) + "%" : "—";
+        const costoBase = ct !== null ? fmtMoney(ct) : "—";
         const ped = cargadas.get(c.id);
         return (
           "<tr><td>" + fmtFecha(c.created_at) + "</td><td>" + escHtml(c.nombre_pieza) +
@@ -3429,6 +3448,7 @@
     document.getElementById("calc-margen-error-label").textContent = margenErrorPctVal + "%";
     document.getElementById("calc-margen-ganancia").value = inp.margen_ganancia ?? 2;
     document.getElementById("calc-accesorio").value = inp.costo_accesorio ?? 0;
+    document.getElementById("calc-margen-accesorio").value = inp.margen_accesorio ?? 1; // las cotizaciones viejas cobraban el accesorio al costo
     document.getElementById("calc-acabados").value = inp.costo_acabados ?? 0;
     document.getElementById("calc-altura-capa").value = inp.altura_capa ?? "0.20";
     document.getElementById("calc-relleno").value = inp.relleno_pct ?? 20;
