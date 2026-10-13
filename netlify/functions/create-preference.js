@@ -350,4 +350,10 @@ exports.handler = async (event) => {
 };
 
 // Solo para los tests (Netlify ignora todo lo que no sea `handler`).
-exports._internals = { parseCart, priceOrder, mapProduct, normalizeTiers, tierFor, findSize, basePrice, recargoPct };
+// (crear-pedido.js reutiliza parseCart, priceOrder, loadCatalogData, etc. para que el pedido que se
+// guarda se calcule con EXACTAMENTE la misma lógica que el cobro de Mercado Pago.)
+exports._internals = {
+  parseCart, priceOrder, mapProduct, normalizeTiers, tierFor, findSize, basePrice, recargoPct,
+  loadCatalogData, fetchWithTimeout, cleanText, parseBody, reply, HttpError,
+  DEFAULT_SUPABASE_URL, FETCH_TIMEOUT_MS,
+};
