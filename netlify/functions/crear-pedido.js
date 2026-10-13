@@ -145,6 +145,13 @@ function keyHeaders(key) {
   return h;
 }
 
+// Pista corta para quien administra el sitio (solo el estado HTTP y el código de error de Postgres,
+// nunca el mensaje ni los datos): el checkout la agrega al WhatsApp cuando un pedido no se pudo guardar.
+function dbDetail(out) {
+  const code = out.data && typeof out.data.code === 'string' && /^[A-Za-z0-9_]{3,12}$/.test(out.data.code) ? ' ' + out.data.code : '';
+  return 'supabase ' + out.resp.status + code;
+}
+
 async function insertPedido(row, key) {
   const url = supabaseUrl() + '/rest/v1/pedidos';
   const post = async (payload) => {
@@ -170,11 +177,15 @@ async function insertPedido(row, key) {
     }
   } catch (e) {
     console.error('crear-pedido: error de red con Supabase:', e && e.message);
-    throw new HttpError(502, 'No pudimos guardar el pedido en este momento.', 'DB_UNREACHABLE');
+    const err = new HttpError(502, 'No pudimos guardar el pedido en este momento.', 'DB_UNREACHABLE');
+    err.detail = 'sin red con la base';
+    throw err;
   }
   if (!out.resp.ok) {
     console.error('crear-pedido: Supabase rechazó el pedido:', out.resp.status, JSON.stringify(out.data).slice(0, 500));
-    throw new HttpError(502, 'No pudimos guardar el pedido en este momento.', 'DB_ERROR');
+    const err = new HttpError(502, 'No pudimos guardar el pedido en este momento.', 'DB_ERROR');
+    err.detail = dbDetail(out);
+    throw err;
   }
   const created = Array.isArray(out.data) ? out.data[0] : out.data;
   return created && created.id ? created.id : null;
@@ -257,7 +268,9 @@ exports.handler = async (event) => {
     const id = await insertPedido(row, key);
     return reply(200, { ok: true, id, subtotal });
   } catch (err) {
-    if (err instanceof HttpError) return reply(err.status, { error: err.message, code: err.code });
+    if (err instanceof HttpError) {
+      return reply(err.status, Object.assign({ error: err.message, code: err.code }, err.detail ? { detail: err.detail } : {}));
+    }
     console.error('crear-pedido: error inesperado:', err && err.stack ? err.stack : err);
     return reply(500, { error: 'Ocurrió un error inesperado. Probá de nuevo en unos segundos.', code: 'INTERNAL' });
   }
