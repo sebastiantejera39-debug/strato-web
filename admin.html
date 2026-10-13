@@ -14,8 +14,8 @@
     --accent: #350A06; --accent-light: #4A1510; --accent-dark: #240804;
     --lila: #DAC7FF;
     --bg: #FFFFFF; --bg-card: #FFFFFF; --bg-section: #F7F3EE;
-    --text: #241008; --text-muted: #83685F; --border: #ECE6DE;
-    --danger: #B3392B; --ok: #3E7D52;
+    --text: #241008; --text-muted: #6F554C; --border: #ECE6DE;
+    --danger: #B3392B; --ok: #2F6B43; --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     --font-display: 'Bricolage Grotesque', 'Helvetica Neue', Arial, sans-serif;
     --font-body: 'Inter', 'Helvetica Neue', Arial, sans-serif;
   }
@@ -27,17 +27,22 @@
   .login-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; padding: 40px; width: 100%; max-width: 360px; box-shadow: 0 8px 30px rgba(53,10,6,0.08); }
   .login-logo { font-family: var(--font-display); font-weight: 800; font-size: 30px; letter-spacing: -0.01em; color: var(--accent); text-align: center; margin-bottom: 4px; }
   .login-sub { text-align: center; color: var(--text-muted); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 28px; }
-  label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+  label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
   input, select, textarea { width: 100%; background: #FFFFFF; border: 1px solid var(--border); color: var(--text); border-radius: 3px; padding: 10px 12px; font-size: 14px; font-family: inherit; margin-bottom: 16px; }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(53,10,6,0.14); }
+  button:focus-visible, a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  header button:focus-visible, nav.tabs button:focus-visible { outline-color: var(--lila); }
   button { font-family: inherit; cursor: pointer; }
-  .btn { background: var(--accent); color: #FFFFFF; border: none; border-radius: 3px; padding: 11px 20px; font-size: 13px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; width: 100%; transition: background 0.2s; }
-  .btn:hover { background: var(--accent-light); }
+  .btn { background: var(--accent); color: #FFFFFF; border: none; border-radius: 3px; padding: 11px 20px; font-size: 13px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; width: 100%; }
+  @media (hover: hover) { .btn:hover { background: var(--accent-light); } }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary, .btn-danger { border-radius: 3px; padding: 11px 20px; font-size: 13px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; width: 100%; }
   .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  @media (hover: hover) { .btn-secondary:hover { border-color: var(--accent); color: var(--accent); } }
+  header .btn-secondary { border-color: rgba(255,255,255,0.5); color: #FFFFFF; }
+  @media (hover: hover) { header .btn-secondary:hover { border-color: #FFFFFF; background: rgba(255,255,255,0.12); color: #FFFFFF; } }
   .btn-danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
-  .btn-small { padding: 6px 12px; font-size: 11px; width: auto; }
+  .btn-small { padding: 8px 12px; font-size: 12px; width: auto; }
   .error-msg { color: var(--danger); font-size: 13px; margin-top: -8px; margin-bottom: 16px; min-height: 16px; }
   .ok-msg { color: var(--ok); font-size: 13px; margin-bottom: 16px; }
 
@@ -62,11 +67,11 @@
   @media (max-width: 640px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { text-align: left; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
   td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   tfoot td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
-  tr:hover td { background: rgba(53,10,6,0.04); }
-  .table-wrap { overflow-x: auto; }
+  @media (hover: hover) { tr:hover td { background: rgba(53,10,6,0.04); } }
+  .table-wrap { overflow-x: auto; position: relative; }
   .muted { color: var(--text-muted); }
   .empty-msg { color: var(--text-muted); text-align: center; padding: 24px; }
   .badge-pill { display: inline-block; background: rgba(53,10,6,0.08); color: var(--accent); border-radius: 12px; padding: 2px 10px; font-size: 11px; }
@@ -93,15 +98,9 @@
   .toolbar .search-bar { flex: 1; min-width: 180px; margin-bottom: 0; }
   .filtro-row { display: flex; gap: 16px; align-items: end; flex-wrap: wrap; }
   .filtro-row > div { flex: 1; min-width: 140px; }
-  .filtro-row .btn-secondary { margin-bottom: 16px; width: auto; padding-left: 20px; padding-right: 20px; }
-  .dash-total { font-family: var(--font-display); font-weight: 700; font-size: 26px; margin-bottom: 4px; }
-  .dash-total.positivo { color: var(--ok); }
-  .dash-total.negativo { color: var(--danger); }
-  .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
-  .stat-box { flex: 1; min-width: 160px; background: var(--bg-section); border: 1px solid var(--border); border-radius: 4px; padding: 16px 18px; }
-  .stat-box .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 6px; }
+  .filtro-row .btn-secondary { margin-bottom: 16px; width: auto; padding-left: 20px; padding-right: 20px; background: #FFFFFF; color: var(--accent); border-color: var(--accent); font-weight: 600; }
 
-  .estado-select { padding: 5px 8px; font-size: 11px; margin: 0; border-radius: 3px; }
+  .estado-select { padding: 5px 8px; font-size: 12px; margin: 0; border-radius: 3px; min-width: 124px; }
   .estado-nuevo { color: var(--accent); }
   .estado-cancelado { color: var(--danger); }
   .estado-entregado, .estado-listo { color: var(--ok); }
@@ -194,6 +193,218 @@
   .calc-line-final { display: flex; justify-content: space-between; align-items: baseline; padding-top: 10px; font-family: var(--font-display); font-weight: 700; font-size: 20px; color: var(--accent); }
   .calc-line-final .tag { font-size: 11px; font-family: var(--font-body); color: var(--text-muted); }
   .calc-margen-label { display: flex; justify-content: space-between; }
+
+  /* ==========================================================================
+     Dashboard, ventas manuales, accesibilidad y movimiento
+     ========================================================================== */
+  body { font-variant-numeric: tabular-nums; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  [hidden] { display: none !important; }
+
+  /* Botones: respuesta táctil inmediata (rápida, no decorativa) */
+  .btn, .btn-small, .btn-soft, .seg button, .att, nav.tabs button, .estado-select {
+    transition: background-color 0.16s var(--ease-out), border-color 0.16s var(--ease-out), color 0.16s var(--ease-out), transform 0.16s var(--ease-out);
+  }
+  .btn:active, .btn-small:active, .btn-soft:active, .seg button:active, .att:active { transform: scale(0.97); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+  }
+
+  /* Pestañas */
+  nav.tabs button .tab-badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--lila); color: var(--accent); font-size: 12px; line-height: 18px; text-align: center; letter-spacing: 0; }
+  @media (hover: hover) { nav.tabs button:not(.active):hover { color: #FFFFFF; } }
+
+  /* Encabezado del dashboard */
+  .dash-top { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+  .dash-h1 { font-family: var(--font-display); font-weight: 700; font-size: 22px; color: var(--accent); }
+  .dash-range { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+  .dash-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 12px; color: var(--text-muted); }
+  .btn-soft { background: #FFFFFF; border: 1px solid var(--border); border-radius: 3px; padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--text); min-height: 36px; width: auto; }
+  .btn-soft.primary { background: var(--accent); border-color: var(--accent); color: #FFFFFF; }
+  @media (hover: hover) {
+    .btn-soft:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-soft.primary:hover { background: var(--accent-light); color: #FFFFFF; }
+  }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .seg button { border: 1px solid var(--border); background: #FFFFFF; color: var(--text); border-radius: 999px; padding: 8px 14px; font-size: 13px; min-height: 36px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #FFFFFF; }
+  @media (hover: hover) { .seg button[aria-pressed="false"]:hover { border-color: var(--accent); } }
+  .dash-custom { display: flex; flex-wrap: wrap; gap: 0 14px; align-items: end; margin-bottom: 4px; }
+  .dash-custom > div { min-width: 150px; }
+  .dash-custom .btn-secondary { margin-bottom: 16px; width: auto; }
+  .dash-note { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
+  .dash-note.warn { color: #8A2A1F; }
+  .dash-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; border: 1px solid var(--border); background: var(--bg-section); border-radius: 4px; padding: 12px 14px; font-size: 13px; margin-bottom: 16px; }
+  .dash-status.err { border-color: rgba(179,57,43,0.4); background: #FBEEEC; color: #7E2A20; }
+  #panel-dashboard[aria-busy="true"] .atencion, #panel-dashboard[aria-busy="true"] .kpis { opacity: 0.55; }
+
+  /* Para atender ahora */
+  .atencion { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .att { display: flex; flex-direction: column; gap: 2px; text-align: left; background: #FFFFFF; border: 1px solid var(--border); border-radius: 4px; padding: 14px 16px; color: inherit; width: 100%; }
+  .att .n { font-family: var(--font-display); font-weight: 700; font-size: 28px; line-height: 1.1; }
+  .att .l { font-size: 13px; color: var(--text-muted); }
+  .att .sub { font-size: 12px; margin-top: 4px; color: var(--text-muted); }
+  .att.hot { background: var(--accent); border-color: var(--accent); color: #FFFFFF; }
+  .att.hot .l { color: rgba(255,255,255,0.82); }
+  .att.hot .sub { color: var(--lila); }
+  @media (hover: hover) { .att:not(.hot):hover { border-color: var(--accent); } .att.hot:hover { background: var(--accent-light); } }
+
+  /* Indicadores */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--bg-section); border: 1px solid var(--border); border-radius: 4px; padding: 16px 18px; display: flex; flex-direction: column; min-width: 0; }
+  .kpi .label { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; text-transform: none; letter-spacing: 0; }
+  .kpi .val { font-family: var(--font-display); font-weight: 700; font-size: 28px; line-height: 1.1; }
+  .kpi .val.pos { color: var(--ok); }
+  .kpi .val.neg { color: var(--danger); }
+  .kpi .meta { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+  .delta { font-weight: 600; }
+  .delta.good { color: var(--ok); }
+  .delta.bad { color: var(--danger); }
+  .delta.flat { color: var(--text-muted); }
+
+  /* Tarjetas del dashboard */
+  .dgrid { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; margin-bottom: 16px; }
+  .dgrid.b { grid-template-columns: 1fr 1fr; }
+  .dcard { background: #FFFFFF; border: 1px solid var(--border); border-radius: 4px; padding: 20px; min-width: 0; }
+  .dcard h2 { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--accent); margin-bottom: 4px; }
+  .dcard .hint { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+  .dcard.wide { margin-bottom: 16px; }
+  .chart-box { width: 100%; min-height: 150px; }
+  .chart-box svg { display: block; max-width: 100%; }
+  .chart-box svg text { font-family: var(--font-body); fill: var(--text-muted); font-size: 12px; }
+  .dash-table { margin-top: 10px; font-size: 12px; }
+  .dash-table summary { cursor: pointer; color: var(--text-muted); padding: 6px 0; }
+  .dash-table table { margin-top: 6px; }
+  .bars .row { display: grid; grid-template-columns: 104px 1fr auto; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+  .bars .track { height: 10px; background: var(--bg-section); border-radius: 2px; overflow: hidden; }
+  .bars .fill { height: 100%; background: var(--accent); border-radius: 2px; }
+  .bars .amt { font-weight: 600; min-width: 84px; text-align: right; }
+  .bars .pct { color: var(--text-muted); font-weight: 400; margin-left: 6px; font-size: 12px; }
+  .bars .nm { overflow-wrap: anywhere; }
+  .top5 { list-style: none; }
+  .top5 li { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .top5 li:last-child { border-bottom: none; }
+  .top5 .u { color: var(--text-muted); white-space: nowrap; }
+  .empty-inline { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+  .age { display: inline-block; white-space: nowrap; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 9px; background: var(--bg-section); }
+  .age.late { background: #F6DDD9; color: #8A2A1F; }
+  table.nt td.m { white-space: nowrap; text-align: right; font-weight: 600; }
+  table.nt th.r { text-align: right; }
+  table.nt .muted { font-size: 12px; white-space: nowrap; }
+
+  /* Etiqueta del canal de venta */
+  .canal-tag { display: inline-block; font-size: 12px; border-radius: 999px; padding: 1px 8px; margin-left: 6px; background: rgba(53,10,6,0.08); color: var(--accent); vertical-align: 1px; white-space: nowrap; }
+  .canal-tag.web { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+
+  /* Pedidos: encabezado, venta manual, mensajes */
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .card-head h2 { margin-bottom: 0; }
+  #venta-body { margin-top: 18px; }
+  .venta-lbl { display: block; margin-bottom: 6px; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .venta-row { display: grid; grid-template-columns: 1fr 84px 118px 118px 44px; gap: 10px; align-items: end; margin-bottom: 10px; }
+  .venta-row input, .venta-row select { margin-bottom: 0; }
+  .venta-row .vf { margin: 0; min-width: 0; }
+  .venta-row .vf-t { display: block; font-size: 11px; letter-spacing: 0.06em; margin-bottom: 4px; }
+  .venta-row .venta-otro { grid-column: 1 / -1; }
+  .venta-total { display: flex; justify-content: space-between; align-items: baseline; margin: 16px 0 4px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 14px; }
+  .venta-total strong { font-family: var(--font-display); font-size: 22px; color: var(--accent); }
+  .venta-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .venta-actions .btn, .venta-actions .btn-secondary { width: auto; min-width: 150px; }
+  .inline-msg { font-size: 13px; padding: 10px 12px; border-radius: 3px; margin-bottom: 14px; background: var(--bg-section); border: 1px solid var(--border); }
+  .inline-msg.err { background: #FBEEEC; border-color: rgba(179,57,43,0.4); color: #7E2A20; }
+  .inline-msg.ok { background: #EAF3EC; border-color: rgba(47,107,67,0.35); color: #25573A; }
+  .pedidos-count { font-size: 12px; color: var(--text-muted); margin: -4px 0 12px; }
+  tr.flash td { animation: row-flash 1.6s var(--ease-out); }
+
+  /* Ganancia neta (desglose) */
+  .gn-grid { display: grid; grid-template-columns: minmax(190px, 1fr) 2fr; gap: 18px 32px; align-items: start; }
+  .gn-val { font-family: var(--font-display); font-weight: 800; font-size: 34px; line-height: 1.05; }
+  .gn-val.pos { color: var(--ok); }
+  .gn-val.neg { color: var(--danger); }
+  .gn-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+  .gn-lines { display: flex; flex-direction: column; }
+  .gn-line { display: grid; grid-template-columns: 1fr auto 56px; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .gn-line .t { min-width: 0; overflow-wrap: anywhere; }
+  .gn-line .a { font-weight: 600; text-align: right; white-space: nowrap; }
+  .gn-line .p { color: var(--text-muted); font-size: 12px; text-align: right; }
+  .gn-line.tot { border-bottom: 0; font-weight: 700; padding-top: 10px; }
+  .gn-line.tot .a { font-family: var(--font-display); font-size: 15px; }
+  .gn-d { display: block; font-size: 12px; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
+  .gn-bar { display: flex; height: 14px; margin-top: 18px; background: var(--bg-section); border-radius: 3px; overflow: hidden; }
+  .gn-bar span { display: block; height: 100%; }
+  .gn-bar .c1, .gn-legend .c1 { background: #8C6A5B; }
+  .gn-bar .c2, .gn-legend .c2 { background: var(--lila); }
+  .gn-bar .c3, .gn-legend .c3 { background: var(--ok); }
+  .gn-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+  .gn-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .gn-note { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; margin-top: 10px; color: var(--text-muted); }
+  .gn-note.warn { color: #8A2A1F; }
+  .top5 .gp { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .top5 .gp.neg { color: var(--danger); }
+  .top5 .gp.none { color: #8A2A1F; }
+
+  /* Costos privados en Productos / venta manual / calculadora */
+  .cost-row { display: grid; grid-template-columns: 1fr 130px 1.2fr; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .cost-row input, .cost-row select { margin-bottom: 0; }
+  .cost-row .cost-lbl { font-size: 14px; overflow-wrap: anywhere; }
+  .badge-sc { display: inline-block; font-size: 12px; color: #8A2A1F; background: #FBEEEC; border-radius: 12px; padding: 1px 8px; margin-top: 3px; }
+  .badge-ok { display: inline-block; font-size: 12px; color: var(--ok); margin-top: 3px; }
+  .venta-origen { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; border: 1px solid rgba(53,10,6,0.22); background: #F5F0FF; border-radius: 4px; padding: 12px 14px; font-size: 13px; margin-bottom: 16px; }
+  .venta-origen[hidden] { display: none; }
+  .venta-origen .vo-txt { flex: 1 1 260px; min-width: 0; }
+  .venta-origen .vo-diff { display: block; margin-top: 4px; font-weight: 600; }
+  .venta-costo-linea { font-size: 13px; color: var(--text-muted); text-align: right; margin: 0 0 6px; min-height: 18px; }
+  .venta-costo-linea strong { color: var(--text); }
+  .venta-costo-linea .pos { color: var(--ok); font-weight: 600; }
+  .venta-costo-linea .neg { color: var(--danger); font-weight: 600; }
+  .calc-pedido-btn { margin-top: 10px; }
+  .gp-pos { color: var(--ok); font-weight: 600; }
+  .gp-neg { color: var(--danger); font-weight: 600; }
+  .cot-cargada { display: block; font-size: 12px; color: var(--ok); margin-top: 2px; }
+  @keyframes row-flash { from { background: rgba(218,199,255,0.75); } to { background: transparent; } }
+
+  @media (max-width: 700px) {
+    header { padding: 12px 16px; }
+    header .who span { display: none; }
+    nav.tabs { padding: 0 8px; }
+    main { padding: 16px 16px 60px; }
+    .atencion, .kpis { grid-template-columns: 1fr 1fr; }
+    .dgrid, .dgrid.b { grid-template-columns: 1fr; }
+    .kpi .val { font-size: 22px; }
+    .att .n { font-size: 24px; }
+    .bars .row { grid-template-columns: 82px 1fr auto; }
+    .seg { flex-wrap: nowrap; overflow-x: auto; margin-left: -16px; margin-right: -16px; padding: 0 16px 2px; scrollbar-width: none; }
+    .seg button { white-space: nowrap; flex: 0 0 auto; }
+    .venta-row { grid-template-columns: 64px 1fr 1fr 44px; gap: 8px; }
+    .venta-row .vf-prod { grid-column: 1 / -1; }
+    .venta-row .venta-otro { grid-column: 1 / -1; }
+    .gn-grid { grid-template-columns: 1fr; gap: 14px; }
+    .gn-val { font-size: 28px; }
+    .cost-row { grid-template-columns: 110px 1fr; }
+    .cost-row .cost-lbl { grid-column: 1 / -1; font-weight: 600; }
+    table.nt thead, table.cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    table.nt, table.nt tbody, table.nt tr, table.nt td, table.cards, table.cards tbody, table.cards tr, table.cards td { display: block; width: 100%; }
+    table.nt tr, table.cards tr.clickable { border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; margin-bottom: 10px; background: #FFFFFF; }
+    table.nt td, table.cards td { border: 0; padding: 4px 0; display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; text-align: right; }
+    table.nt td::before, table.cards td::before { content: attr(data-label); color: var(--text-muted); font-size: 12px; text-align: left; flex: 0 0 auto; }
+    table.nt td.act, table.cards td.act { justify-content: flex-end; padding-top: 8px; }
+    table.nt td.act::before, table.cards td.act::before { content: none; }
+    table.nt td.m { white-space: normal; }
+    table.nt tr:hover td, table.cards tr:hover td { background: transparent; }
+    table.cards tr.clickable:has(+ .detalle-row:not(.hidden-row)) { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    table.cards tr.detalle-row { border: 1px solid var(--border); border-top: 0; border-radius: 0 0 4px 4px; margin-bottom: 10px; background: var(--bg-section); }
+    table.cards tr.detalle-row td { display: block; text-align: left; padding: 10px 14px; }
+    table.cards tr.detalle-row td::before { content: none; }
+    table.cards td select { width: auto; min-width: 150px; }
+  }
+
+  /* Pantallas táctiles: objetivos de al menos 44 px */
+  @media (pointer: coarse) {
+    .btn, .btn-small, .btn-soft, .btn-secondary, .att, .seg button, nav.tabs button, select, .estado-select,
+    input[type="text"], input[type="date"], input[type="number"], input[type="email"], input[type="password"], input[type="search"] { min-height: 44px; }
+    .row-del { min-width: 44px; min-height: 44px; }
+    .btn-small, .btn-soft { padding-top: 10px; padding-bottom: 10px; }
+  }
 </style>
 </head>
 <body>
@@ -224,67 +435,184 @@
     </div>
   </header>
 
-  <nav class="tabs">
-    <button data-panel="panel-dashboard" class="active">Dashboard</button>
-    <button data-panel="panel-pedidos">Pedidos</button>
-    <button data-panel="panel-productos">Productos</button>
-    <button data-panel="panel-categorias">Categorías</button>
-    <button data-panel="panel-filamentos">Filamentos</button>
-    <button data-panel="panel-gastos">Gastos</button>
-    <button data-panel="panel-calculadora">Calculadora</button>
-    <button data-panel="panel-mercadolibre">Mercado Libre</button>
+  <nav class="tabs" role="tablist" aria-label="Secciones del panel" id="tablist">
+    <button type="button" role="tab" id="tab-dashboard" data-panel="panel-dashboard" aria-controls="panel-dashboard" aria-selected="true" tabindex="0" class="active">Dashboard</button>
+    <button type="button" role="tab" id="tab-pedidos" data-panel="panel-pedidos" aria-controls="panel-pedidos" aria-selected="false" tabindex="-1">Pedidos <span class="tab-badge" id="tab-badge" hidden></span></button>
+    <button type="button" role="tab" id="tab-productos" data-panel="panel-productos" aria-controls="panel-productos" aria-selected="false" tabindex="-1">Productos</button>
+    <button type="button" role="tab" id="tab-categorias" data-panel="panel-categorias" aria-controls="panel-categorias" aria-selected="false" tabindex="-1">Categorías</button>
+    <button type="button" role="tab" id="tab-filamentos" data-panel="panel-filamentos" aria-controls="panel-filamentos" aria-selected="false" tabindex="-1">Filamentos</button>
+    <button type="button" role="tab" id="tab-gastos" data-panel="panel-gastos" aria-controls="panel-gastos" aria-selected="false" tabindex="-1">Gastos</button>
+    <button type="button" role="tab" id="tab-calculadora" data-panel="panel-calculadora" aria-controls="panel-calculadora" aria-selected="false" tabindex="-1">Calculadora</button>
+    <button type="button" role="tab" id="tab-mercadolibre" data-panel="panel-mercadolibre" aria-controls="panel-mercadolibre" aria-selected="false" tabindex="-1">Mercado Libre</button>
   </nav>
 
   <main>
 
     <!-- ---- DASHBOARD ---- -->
-    <section class="panel active" id="panel-dashboard">
-      <div class="card">
-        <h2>Resumen</h2>
-        <div class="filtro-row">
-          <div><label for="dash-desde">Desde</label><input type="date" id="dash-desde"></div>
-          <div><label for="dash-hasta">Hasta</label><input type="date" id="dash-hasta"></div>
-          <div><button type="button" class="btn-secondary" id="dash-filtrar">Filtrar</button></div>
+    <section class="panel active" id="panel-dashboard" role="tabpanel" aria-labelledby="tab-dashboard" aria-busy="true">
+      <div class="dash-top">
+        <div>
+          <h1 class="dash-h1">Resumen</h1>
+          <div class="dash-range" id="dash-range"></div>
         </div>
-        <div class="stat-row">
-          <div class="stat-box">
-            <div class="label">Pedidos en el período</div>
-            <div class="dash-total" id="dash-pedidos-count">0</div>
-          </div>
-          <div class="stat-box">
-            <div class="label">Ingresos (pedidos no cancelados)</div>
-            <div class="dash-total" id="dash-ingresos">$U 0</div>
-          </div>
-          <div class="stat-box">
-            <div class="label">Gastos</div>
-            <div class="dash-total" id="dash-gastos">$U 0</div>
-          </div>
-          <div class="stat-box">
-            <div class="label">Saldo</div>
-            <div class="dash-total" id="dash-saldo">$U 0</div>
-          </div>
+        <div class="dash-tools">
+          <span id="dash-upd"></span>
+          <button type="button" class="btn-soft" id="dash-refresh">↻ Actualizar</button>
+          <button type="button" class="btn-soft primary" id="dash-venta-btn">+ Venta manual</button>
         </div>
-        <p class="muted" style="margin-top:6px;font-size:12px;">Pedidos con estado "Cancelado" no se cuentan como ingreso.</p>
       </div>
 
-      <div class="card">
-        <h2>Pedidos nuevos sin gestionar</h2>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Fecha</th><th>Cliente</th><th>Items</th><th>Subtotal</th><th></th></tr></thead>
-            <tbody id="dash-nuevos-tbody"></tbody>
-          </table>
-          <p class="empty-msg" id="dash-nuevos-empty" style="display:none">No hay pedidos nuevos pendientes.</p>
-        </div>
+      <div class="seg" id="dash-seg" role="group" aria-label="Período">
+        <button type="button" data-per="hoy" aria-pressed="false">Hoy</button>
+        <button type="button" data-per="7d" aria-pressed="false">7 días</button>
+        <button type="button" data-per="mes" aria-pressed="true">Este mes</button>
+        <button type="button" data-per="mesant" aria-pressed="false">Mes anterior</button>
+        <button type="button" data-per="todo" aria-pressed="false">Todo</button>
+        <button type="button" data-per="custom" aria-pressed="false">Elegir fechas…</button>
       </div>
+      <div class="dash-custom" id="dash-custom" hidden>
+        <div><label for="dash-desde">Desde</label><input type="date" id="dash-desde"></div>
+        <div><label for="dash-hasta">Hasta</label><input type="date" id="dash-hasta"></div>
+        <div><button type="button" class="btn-secondary" id="dash-aplicar">Aplicar</button></div>
+      </div>
+      <p class="dash-note" id="dash-note" hidden></p>
+      <div class="dash-status" id="dash-status" role="status" hidden></div>
+
+      <section class="atencion" id="dash-atencion" aria-label="Para atender ahora"></section>
+      <section class="kpis" id="dash-kpis" aria-label="Indicadores del período"></section>
+
+      <section class="dcard wide gn" id="dash-gn" aria-labelledby="dash-gn-title">
+        <h2 id="dash-gn-title">Ganancia neta</h2>
+        <div class="hint" id="dash-gn-hint"></div>
+        <div id="dash-gn-body"></div>
+      </section>
+
+      <section class="dgrid">
+        <div class="dcard">
+          <h2 id="dash-chart-title">Ingresos por día</h2>
+          <div class="hint" id="dash-chart-hint"></div>
+          <div class="chart-box" id="dash-chart"></div>
+          <details class="dash-table"><summary>Ver como tabla</summary><div id="dash-chart-table"></div></details>
+        </div>
+        <div class="dcard">
+          <h2>Gastos por categoría</h2>
+          <div class="hint" id="dash-gastos-hint"></div>
+          <div class="bars" id="dash-gastos-bars"></div>
+        </div>
+      </section>
+
+      <section class="dgrid b">
+        <div class="dcard">
+          <h2>Ventas por canal</h2>
+          <div class="hint" id="dash-canal-hint"></div>
+          <div class="bars" id="dash-canal-bars"></div>
+        </div>
+        <div class="dcard">
+          <h2>Lo más pedido</h2>
+          <div class="hint">Unidades en el período, sin cancelados</div>
+          <ul class="top5" id="dash-top"></ul>
+        </div>
+      </section>
+
+      <section class="dcard wide">
+        <h2>Pedidos nuevos sin gestionar</h2>
+        <div class="hint" id="dash-nuevos-hint"></div>
+        <table class="nt">
+          <thead><tr><th>Hace</th><th>Cliente</th><th>Items</th><th class="r">Subtotal</th><th><span class="sr-only">Acción</span></th></tr></thead>
+          <tbody id="dash-nuevos-tbody"></tbody>
+        </table>
+        <p class="empty-inline" id="dash-nuevos-empty" hidden>No hay pedidos nuevos pendientes.</p>
+      </section>
     </section>
 
     <!-- ---- PEDIDOS ---- -->
-    <section class="panel" id="panel-pedidos">
+    <section class="panel" id="panel-pedidos" role="tabpanel" aria-labelledby="tab-pedidos">
       <div class="card">
+        <div class="card-head">
+          <h2>Venta manual</h2>
+          <button type="button" class="btn btn-small" id="venta-toggle" aria-expanded="false" aria-controls="venta-body">+ Cargar una venta</button>
+        </div>
+        <div id="venta-body" hidden>
+          <p class="muted" style="font-size:13px;margin-bottom:16px;">Para ventas que no pasaron por la web: Instagram, WhatsApp, Mercado Libre, en el local. Cuenta en el dashboard como cualquier otro pedido.</p>
+          <form id="form-venta" novalidate>
+            <div class="venta-origen" id="venta-origen" role="status" hidden></div>
+            <div class="grid3">
+              <div>
+                <label for="venta-canal">Canal</label>
+                <select id="venta-canal">
+                  <option value="instagram">Instagram</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="mercadolibre">Mercado Libre</option>
+                  <option value="local">En persona / local</option>
+                  <option value="otro">Otro</option>
+                </select>
+              </div>
+              <div>
+                <label for="venta-fecha">Fecha de la venta</label>
+                <input type="date" id="venta-fecha">
+              </div>
+              <div>
+                <label for="venta-estado">Estado</label>
+                <select id="venta-estado">
+                  <option value="entregado">Entregado</option>
+                  <option value="listo">Listo</option>
+                  <option value="en_produccion">En producción</option>
+                  <option value="confirmado">Confirmado</option>
+                  <option value="nuevo">Nuevo</option>
+                </select>
+              </div>
+            </div>
+            <div class="grid2">
+              <div>
+                <label for="venta-cliente">Cliente</label>
+                <input type="text" id="venta-cliente" maxlength="80" placeholder="Nombre o usuario de Instagram">
+              </div>
+              <div>
+                <label for="venta-contacto">Contacto (opcional)</label>
+                <input type="text" id="venta-contacto" maxlength="40" placeholder="Teléfono o usuario">
+              </div>
+            </div>
+            <div class="grid2">
+              <div>
+                <label for="venta-entrega">Entrega</label>
+                <select id="venta-entrega">
+                  <option value="Retiro / en mano">Retiro / en mano</option>
+                  <option value="Envío">Envío</option>
+                </select>
+              </div>
+              <div>
+                <label for="venta-pago">Pago</label>
+                <select id="venta-pago">
+                  <option value="">Sin indicar</option>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Transferencia bancaria">Transferencia bancaria</option>
+                  <option value="Mercado Pago">Mercado Pago</option>
+                  <option value="Otro">Otro</option>
+                </select>
+              </div>
+            </div>
+            <span class="venta-lbl" id="venta-items-lbl">Productos</span>
+            <div id="venta-items" role="group" aria-labelledby="venta-items-lbl"></div>
+            <button type="button" class="btn-secondary btn-small" id="venta-add-item">+ Agregar otro producto</button>
+            <label for="venta-notas" style="margin-top:16px;">Notas (opcional)</label>
+            <input type="text" id="venta-notas" maxlength="300">
+            <div class="venta-total"><span>Total de la venta</span><strong id="venta-total">$U 0</strong></div>
+            <div class="venta-costo-linea" id="venta-costo-linea" aria-live="polite"></div>
+            <div class="error-msg" id="venta-error" role="alert"></div>
+            <div class="venta-actions">
+              <button type="submit" class="btn" id="venta-guardar">Guardar venta</button>
+              <button type="button" class="btn-secondary" id="venta-cancelar">Cancelar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Pedidos</h2>
+        <div class="inline-msg" id="pedidos-msg" role="status" hidden></div>
         <div class="toolbar">
-          <div class="search-bar"><input type="text" id="pedidos-buscar" placeholder="Buscar por nombre, teléfono o email..."></div>
-          <select id="pedidos-filtro-estado" style="width:auto;margin-bottom:0;">
+          <div class="search-bar"><input type="text" id="pedidos-buscar" aria-label="Buscar pedidos" placeholder="Buscar por nombre, teléfono o email..."></div>
+          <select id="pedidos-filtro-estado" aria-label="Filtrar por estado" style="width:auto;margin-bottom:0;">
             <option value="todos">Todos los estados</option>
             <option value="nuevo">Nuevo</option>
             <option value="confirmado">Confirmado</option>
@@ -293,10 +621,20 @@
             <option value="entregado">Entregado</option>
             <option value="cancelado">Cancelado</option>
           </select>
+          <select id="pedidos-filtro-canal" aria-label="Filtrar por canal" style="width:auto;margin-bottom:0;">
+            <option value="todos">Todos los canales</option>
+            <option value="web">Web</option>
+            <option value="instagram">Instagram</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="mercadolibre">Mercado Libre</option>
+            <option value="local">En persona / local</option>
+            <option value="otro">Otro</option>
+          </select>
         </div>
+        <p class="pedidos-count" id="pedidos-count"></p>
         <div class="table-wrap">
-          <table>
-            <thead><tr><th>Fecha</th><th>Cliente</th><th>Items</th><th>Subtotal</th><th>Entrega</th><th>Estado</th><th></th></tr></thead>
+          <table class="cards">
+            <thead><tr><th>Fecha</th><th>Cliente</th><th>Items</th><th>Subtotal</th><th>Entrega</th><th>Estado</th><th><span class="sr-only">Detalle</span></th></tr></thead>
             <tbody id="pedidos-tbody"></tbody>
           </table>
           <p class="empty-msg" id="pedidos-empty" style="display:none">No hay pedidos que coincidan.</p>
@@ -305,7 +643,7 @@
     </section>
 
     <!-- ---- PRODUCTOS ---- -->
-    <section class="panel" id="panel-productos">
+    <section class="panel" id="panel-productos" role="tabpanel" aria-labelledby="tab-productos">
       <div class="card">
         <div class="collapsible-header open" id="escalones-toggle">
           <h2>Descuentos por cantidad</h2>
@@ -377,6 +715,11 @@
             <p class="muted" style="font-size:12px;margin:-8px 0 10px;">Si el producto viene en varios tamaños, cargalos con el precio de cada uno: el cliente elige uno y se cobra ese precio. Con tamaños, el campo Precio de arriba se completa solo con el más barato.</p>
             <div id="prod-tamanos-rows"></div>
             <button type="button" class="btn-secondary btn-small" id="prod-add-tamano" style="margin-bottom:16px;">+ Agregar tamaño</button>
+
+            <label id="prod-costos-lbl">Costo de fabricación (privado)</label>
+            <p class="muted" style="font-size:12px;margin:-8px 0 10px;">Cuánto te cuesta hacer <strong>una unidad</strong> (material, luz, desgaste…). Solo lo ves vos en el panel: no aparece en la tienda. Con esto el Dashboard calcula la ganancia neta. Lo podés escribir o traerlo de una cotización de la calculadora (el costo base).</p>
+            <div class="inline-msg err" id="prod-costos-note" role="status" hidden></div>
+            <div id="prod-costos-rows" role="group" aria-labelledby="prod-costos-lbl"></div>
 
             <div class="inline-check">
               <input type="checkbox" id="prod-por-cantidad">
@@ -452,6 +795,10 @@
           <select id="productos-filtro-categoria" style="width:auto;margin-bottom:0;">
             <option value="todas">Todas las categorías</option>
           </select>
+          <select id="productos-filtro-costo" aria-label="Filtrar por costo cargado" style="width:auto;margin-bottom:0;">
+            <option value="todos">Con o sin costo</option>
+            <option value="sin">Solo sin costo cargado</option>
+          </select>
         </div>
         <div class="table-wrap">
           <table>
@@ -464,7 +811,7 @@
     </section>
 
     <!-- ---- CATEGORIAS ---- -->
-    <section class="panel" id="panel-categorias">
+    <section class="panel" id="panel-categorias" role="tabpanel" aria-labelledby="tab-categorias">
       <div class="card">
         <h2>Nueva categoría</h2>
         <form id="form-categoria">
@@ -507,7 +854,7 @@
     </section>
 
     <!-- ---- FILAMENTOS ---- -->
-    <section class="panel" id="panel-filamentos">
+    <section class="panel" id="panel-filamentos" role="tabpanel" aria-labelledby="tab-filamentos">
       <div class="card">
         <div class="collapsible-header" id="filamento-form-toggle">
           <h2 id="filamento-form-title">Nuevo filamento</h2>
@@ -594,7 +941,7 @@
     </section>
 
     <!-- ---- GASTOS ---- -->
-    <section class="panel" id="panel-gastos">
+    <section class="panel" id="panel-gastos" role="tabpanel" aria-labelledby="tab-gastos">
       <div class="card">
         <h2>Registrar gasto</h2>
         <form id="form-gasto">
@@ -651,7 +998,7 @@
     </section>
 
     <!-- ---- CALCULADORA DE COSTOS ---- -->
-    <section class="panel" id="panel-calculadora">
+    <section class="panel" id="panel-calculadora" role="tabpanel" aria-labelledby="tab-calculadora">
       <div class="card">
         <div class="collapsible-header" id="maquina-form-toggle">
           <h2 id="maquina-form-title">Nueva máquina</h2>
@@ -818,6 +1165,8 @@
           <button type="button" class="btn-secondary" id="calc-limpiar-btn">Limpiar</button>
           <button type="button" class="btn" id="calc-guardar-btn">Guardar cotización</button>
         </div>
+        <button type="button" class="btn-secondary calc-pedido-btn" id="calc-pedido-btn">Guardar y cargar como pedido</button>
+        <p class="muted" style="font-size:12px;margin-top:6px;">Guarda la cotización y abre el formulario de pedido con el total sugerido y el costo base ya puestos, para que puedas cobrar otro valor si querés.</p>
         <div class="error-msg" id="calc-error"></div>
       </div>
 
@@ -835,7 +1184,7 @@
 
 
     <!-- ---- MERCADO LIBRE ---- -->
-    <section class="panel" id="panel-mercadolibre">
+    <section class="panel" id="panel-mercadolibre" role="tabpanel" aria-labelledby="tab-mercadolibre">
       <div class="card" id="ml-migration-card" style="display:none">
         <h2>Falta un paso en Supabase</h2>
         <p>Para usar Mercado Libre, corré <strong>supabase/migracion_mercadolibre.sql</strong> en Supabase → SQL Editor → Run, y recargá esta página.</p>
