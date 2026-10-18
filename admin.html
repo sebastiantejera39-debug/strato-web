@@ -231,7 +231,7 @@
   @media (hover: hover) { .seg button[aria-pressed="false"]:hover { border-color: var(--accent); } }
   .dash-custom { display: flex; flex-wrap: wrap; gap: 0 14px; align-items: end; margin-bottom: 4px; }
   .dash-custom > div { min-width: 150px; }
-  .dash-custom .btn-secondary { margin-bottom: 16px; width: auto; }
+  .dash-custom .btn-secondary, .tc-row .btn-secondary { margin-bottom: 16px; width: auto; padding-left: 20px; padding-right: 20px; background: #FFFFFF; color: var(--accent); border-color: var(--accent); font-weight: 600; }
   .dash-note { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
   .dash-note.warn { color: #8A2A1F; }
   .dash-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; border: 1px solid var(--border); background: var(--bg-section); border-radius: 4px; padding: 12px 14px; font-size: 13px; margin-bottom: 16px; }
@@ -390,12 +390,41 @@
     table.nt td.act, table.cards td.act { justify-content: flex-end; padding-top: 8px; }
     table.nt td.act::before, table.cards td.act::before { content: none; }
     table.nt td.m { white-space: normal; }
+    table.nt tfoot { display: block; width: 100%; }
+    table.nt tfoot td:empty { display: none; }
+    table.nt tfoot td { justify-content: space-between; text-align: left; }
+    table.nt tfoot td.m { text-align: right; }
     table.nt tr:hover td, table.cards tr:hover td { background: transparent; }
     table.cards tr.clickable:has(+ .detalle-row:not(.hidden-row)) { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
     table.cards tr.detalle-row { border: 1px solid var(--border); border-top: 0; border-radius: 0 0 4px 4px; margin-bottom: 10px; background: var(--bg-section); }
     table.cards tr.detalle-row td { display: block; text-align: left; padding: 10px 14px; }
     table.cards tr.detalle-row td::before { content: none; }
     table.cards td select { width: auto; min-width: 150px; }
+  }
+
+  /* Filtros de fecha reutilizables (Pedidos, Gastos, Historial) y chips de grupo */
+  .seg.seg-card { margin-bottom: 12px; }
+  .seg .seg-n { font-size: 12px; opacity: 0.75; margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .ff-resumen { font-size: 12px; color: var(--text-muted); margin: -4px 0 12px; }
+  .ff-resumen:empty { display: none; }
+  .card-head.mb { margin-bottom: 16px; }
+  .row-acts { display: flex; flex-wrap: nowrap; gap: 6px; justify-content: flex-end; }
+  td.act { white-space: nowrap; }
+  .row-acts .btn-small { padding: 7px 10px; }
+  .tc-row { display: flex; flex-wrap: wrap; gap: 0 16px; align-items: end; }
+  .tc-row > div { flex: 1; min-width: 150px; }
+  .tc-info { font-size: 12px; color: var(--text-muted); margin: -4px 0 0; }
+  .gasto-equiv { font-size: 13px; margin: -6px 0 14px; color: var(--accent); font-weight: 600; }
+  .field-hint { font-size: 12px; color: var(--text-muted); margin: -10px 0 14px; }
+  .tag-inv { display: inline-block; font-size: 12px; border-radius: 999px; padding: 1px 8px; background: #E9E1F7; color: #4A3A78; white-space: nowrap; }
+  .orig-mon { display: block; font-size: 12px; color: var(--text-muted); font-weight: 400; white-space: nowrap; }
+  .edit-banner { font-size: 13px; padding: 10px 12px; border-radius: 3px; margin-bottom: 14px; background: #F3EEFB; border: 1px solid #D6C9F0; color: #3F2F6E; }
+  tfoot td { font-weight: 600; }
+  .fil-eq { font-size: 12px; color: var(--text-muted); margin: -10px 0 6px; }
+  @media (max-width: 700px) {
+    .seg.seg-card { margin-left: -24px; margin-right: -24px; padding-left: 24px; padding-right: 24px; }
+    .row-acts { justify-content: flex-end; flex-wrap: wrap; }
+    .row-acts .btn-small { padding: 8px 12px; }
   }
 
   /* Pantallas táctiles: objetivos de al menos 44 px */
@@ -529,12 +558,13 @@
     <section class="panel" id="panel-pedidos" role="tabpanel" aria-labelledby="tab-pedidos">
       <div class="card">
         <div class="card-head">
-          <h2>Venta manual</h2>
+          <h2 id="venta-titulo">Venta manual</h2>
           <button type="button" class="btn btn-small" id="venta-toggle" aria-expanded="false" aria-controls="venta-body">+ Cargar una venta</button>
         </div>
         <div id="venta-body" hidden>
-          <p class="muted" style="font-size:13px;margin-bottom:16px;">Para ventas que no pasaron por la web: Instagram, WhatsApp, Mercado Libre, en el local. Cuenta en el dashboard como cualquier otro pedido.</p>
+          <p class="muted" id="venta-ayuda" style="font-size:13px;margin-bottom:16px;">Para ventas que no pasaron por la web: Instagram, WhatsApp, Mercado Libre, en el local. Cuenta en el dashboard como cualquier otro pedido.</p>
           <form id="form-venta" novalidate>
+            <div class="edit-banner" id="venta-edit-banner" role="status" hidden></div>
             <div class="venta-origen" id="venta-origen" role="status" hidden></div>
             <div class="grid3">
               <div>
@@ -545,6 +575,7 @@
                   <option value="mercadolibre">Mercado Libre</option>
                   <option value="local">En persona / local</option>
                   <option value="otro">Otro</option>
+                  <option value="web" id="venta-canal-web" hidden disabled>Web</option>
                 </select>
               </div>
               <div>
@@ -559,6 +590,7 @@
                   <option value="en_produccion">En producción</option>
                   <option value="confirmado">Confirmado</option>
                   <option value="nuevo">Nuevo</option>
+                  <option value="cancelado" id="venta-estado-cancelado" hidden disabled>Cancelado</option>
                 </select>
               </div>
             </div>
@@ -591,6 +623,16 @@
                 </select>
               </div>
             </div>
+            <div class="grid2" id="venta-edit-extra" hidden>
+              <div>
+                <label for="venta-email">Email (opcional)</label>
+                <input type="email" id="venta-email" maxlength="120">
+              </div>
+              <div>
+                <label for="venta-direccion">Dirección de envío (opcional)</label>
+                <input type="text" id="venta-direccion" maxlength="200">
+              </div>
+            </div>
             <span class="venta-lbl" id="venta-items-lbl">Productos</span>
             <div id="venta-items" role="group" aria-labelledby="venta-items-lbl"></div>
             <button type="button" class="btn-secondary btn-small" id="venta-add-item">+ Agregar otro producto</button>
@@ -608,8 +650,18 @@
       </div>
 
       <div class="card">
-        <h2>Pedidos</h2>
+        <div class="card-head mb">
+          <h2>Pedidos</h2>
+          <button type="button" class="btn-soft" id="pedidos-excel" title="Descarga en Excel los pedidos que se ven ahora, con los filtros aplicados">⬇ Descargar Excel</button>
+        </div>
         <div class="inline-msg" id="pedidos-msg" role="status" hidden></div>
+        <div class="seg seg-card" id="pedidos-grupos" role="group" aria-label="Grupo de pedidos">
+          <button type="button" data-grupo="activos" aria-pressed="true">Activos <span class="seg-n" data-n="activos"></span></button>
+          <button type="button" data-grupo="finalizados" aria-pressed="false">Finalizados <span class="seg-n" data-n="finalizados"></span></button>
+          <button type="button" data-grupo="cancelados" aria-pressed="false">Cancelados <span class="seg-n" data-n="cancelados"></span></button>
+          <button type="button" data-grupo="todos" aria-pressed="false">Todos <span class="seg-n" data-n="todos"></span></button>
+        </div>
+        <div id="pedidos-fecha"></div>
         <div class="toolbar">
           <div class="search-bar"><input type="text" id="pedidos-buscar" aria-label="Buscar pedidos" placeholder="Buscar por nombre, teléfono o email..."></div>
           <select id="pedidos-filtro-estado" aria-label="Filtrar por estado" style="width:auto;margin-bottom:0;">
@@ -855,6 +907,7 @@
 
     <!-- ---- FILAMENTOS ---- -->
     <section class="panel" id="panel-filamentos" role="tabpanel" aria-labelledby="tab-filamentos">
+      <div class="card" id="tc-card-filamentos"></div>
       <div class="card">
         <div class="collapsible-header" id="filamento-form-toggle">
           <h2 id="filamento-form-title">Nuevo filamento</h2>
@@ -883,17 +936,25 @@
             </div>
             <div class="grid3">
               <div>
-                <label for="fil-precio-rollo">Precio del rollo ($U)</label>
-                <input type="number" id="fil-precio-rollo" min="0" step="1" placeholder="950" required>
+                <label for="fil-moneda">Moneda del precio</label>
+                <select id="fil-moneda">
+                  <option value="UYU">Pesos uruguayos ($U)</option>
+                  <option value="USD">Dólares (US$)</option>
+                </select>
+              </div>
+              <div>
+                <label for="fil-precio-rollo" id="fil-precio-lbl">Precio del rollo ($U)</label>
+                <input type="number" id="fil-precio-rollo" min="0" step="any" inputmode="decimal" placeholder="950" required>
               </div>
               <div>
                 <label for="fil-peso-rollo">Peso del rollo (gr)</label>
                 <input type="number" id="fil-peso-rollo" min="1" step="1" value="1000" required>
               </div>
-              <div>
-                <label>Precio por kg (se calcula solo)</label>
-                <div class="fil-kg-preview" id="fil-kg-preview">—</div>
-              </div>
+            </div>
+            <div style="margin-bottom:16px;">
+              <label>Precio por kg (se calcula solo)</label>
+              <div class="fil-kg-preview" id="fil-kg-preview">—</div>
+              <div class="fil-eq" id="fil-eq" aria-live="polite"></div>
             </div>
             <div class="grid2">
               <div>
@@ -932,7 +993,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Color</th><th>Marca</th><th>Material</th><th>Rollo</th><th>$U / kg</th><th>Disponible</th><th></th></tr></thead>
+            <thead><tr><th>Color</th><th>Marca</th><th>Material</th><th>Rollo</th><th>$U / kg</th><th>Disponible</th><th><span class="sr-only">Acciones</span></th></tr></thead>
             <tbody id="filamentos-tbody"></tbody>
           </table>
           <p class="empty-msg" id="filamentos-empty" style="display:none">Todavía no cargaste ningún filamento.</p>
@@ -943,18 +1004,38 @@
     <!-- ---- GASTOS ---- -->
     <section class="panel" id="panel-gastos" role="tabpanel" aria-labelledby="tab-gastos">
       <div class="card">
-        <h2>Registrar gasto</h2>
-        <form id="form-gasto">
+        <h2 id="gasto-form-title">Registrar gasto</h2>
+        <div class="edit-banner" id="gasto-edit-banner" role="status" hidden></div>
+        <form id="form-gasto" novalidate>
           <div class="grid2">
             <div>
               <label for="gasto-concepto">Concepto</label>
               <input type="text" id="gasto-concepto" placeholder="Rollo de PLA 1kg" required>
             </div>
             <div>
-              <label for="gasto-monto">Monto ($U)</label>
-              <input type="number" id="gasto-monto" min="0" step="1" required>
+              <label for="gasto-fecha">Fecha</label>
+              <input type="date" id="gasto-fecha" required>
             </div>
           </div>
+          <div class="grid3">
+            <div>
+              <label for="gasto-moneda">Moneda</label>
+              <select id="gasto-moneda">
+                <option value="UYU">Pesos uruguayos ($U)</option>
+                <option value="USD">Dólares (US$)</option>
+                <option value="BRL">Reales (R$)</option>
+              </select>
+            </div>
+            <div>
+              <label for="gasto-monto" id="gasto-monto-lbl">Monto ($U)</label>
+              <input type="number" id="gasto-monto" min="0" step="any" inputmode="decimal" required>
+            </div>
+            <div id="gasto-tc-wrap" hidden>
+              <label for="gasto-tc" id="gasto-tc-lbl">Tipo de cambio ($U por US$ 1)</label>
+              <input type="number" id="gasto-tc" min="0" step="any" inputmode="decimal">
+            </div>
+          </div>
+          <p class="gasto-equiv" id="gasto-equiv" aria-live="polite" hidden></p>
           <div class="grid2">
             <div>
               <label for="gasto-categoria">Categoría</label>
@@ -965,30 +1046,33 @@
                 <option value="Herramientas">Herramientas / repuestos</option>
                 <option value="Marketing">Marketing</option>
                 <option value="Otro">Otro</option>
+                <option value="Inversión inicial">Inversión inicial</option>
               </select>
+              <p class="field-hint" id="gasto-cat-hint" hidden>Inversión inicial: queda anotada, pero no resta de la caja ni de la ganancia. Se ve aparte.</p>
             </div>
             <div>
-              <label for="gasto-fecha">Fecha</label>
-              <input type="date" id="gasto-fecha" required>
+              <label for="gasto-nota">Nota</label>
+              <input type="text" id="gasto-nota">
             </div>
           </div>
-          <label for="gasto-nota">Nota</label>
-          <input type="text" id="gasto-nota">
-          <button type="submit" class="btn">Registrar gasto</button>
-          <div class="error-msg" id="gasto-error"></div>
+          <div class="venta-actions">
+            <button type="submit" class="btn" id="gasto-submit">Registrar gasto</button>
+            <button type="button" class="btn-secondary" id="gasto-cancelar" hidden>Cancelar edición</button>
+          </div>
+          <div class="error-msg" id="gasto-error" role="alert"></div>
         </form>
       </div>
 
+      <div class="card" id="tc-card-gastos"></div>
+
       <div class="card">
         <h2>Gastos registrados</h2>
-        <div class="filtro-row">
-          <div><label for="gastos-desde">Desde</label><input type="date" id="gastos-desde"></div>
-          <div><label for="gastos-hasta">Hasta</label><input type="date" id="gastos-hasta"></div>
-          <div><button type="button" class="btn-secondary" id="gastos-filtrar">Filtrar</button></div>
-        </div>
+        <div class="inline-msg" id="gastos-msg" role="status" hidden></div>
+        <div id="gastos-fecha"></div>
+        <p class="pedidos-count" id="gastos-count"></p>
         <div class="table-wrap">
-          <table>
-            <thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Monto</th><th>Nota</th><th></th></tr></thead>
+          <table class="nt">
+            <thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Monto</th><th>Nota</th><th><span class="sr-only">Acciones</span></th></tr></thead>
             <tbody id="gastos-tbody"></tbody>
             <tfoot id="gastos-tfoot"></tfoot>
           </table>
@@ -1178,6 +1262,8 @@
 
       <div class="card">
         <h2>Historial de cotizaciones</h2>
+        <div id="cotizaciones-fecha"></div>
+        <p class="pedidos-count" id="cotizaciones-count"></p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Fecha</th><th>Pieza</th><th>Cliente</th><th>Máquina</th><th>Costo total</th><th>Total</th><th>Ganancia</th><th></th></tr></thead>

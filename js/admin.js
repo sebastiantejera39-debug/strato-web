@@ -20,8 +20,10 @@
   let categoriasCache = [];
   let productosCache = [];
   let pedidosCache = [];
-  let gastosCache = []; // lista de la pestaña Gastos (con su propio filtro de fechas)
-  let gastosAll = []; // todos los gastos, para el dashboard
+  let gastosAll = []; // todos los gastos: el dashboard y la pestaña Gastos (que los filtra por fecha en pantalla)
+  let gastoEditId = null; // id del gasto que se está editando (null = gasto nuevo)
+  let ventaEditId = null; // id del pedido que se está editando en el formulario de venta (null = venta nueva)
+  let ventaEditOrig = null; // el pedido tal como estaba guardado cuando se abrió la edición
   let pedidosSucio = false; // hay datos nuevos que la lista de Pedidos todavía no dibujó
   let maquinasCache = [];
   let cotizacionesCache = [];
@@ -106,6 +108,31 @@
     const sign = n < 0 ? "-" : "";
     return sign + "$U " + Math.round(Math.abs(n)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   }
+  /* Monedas: el panel trabaja siempre en pesos uruguayos ($U); un gasto en dólares o reales guarda además lo que se pagó
+     y el tipo de cambio que se usó. */
+  const MONEDAS = {
+    UYU: { sim: "$U", nombre: "Pesos" },
+    USD: { sim: "US$", nombre: "Dólares" },
+    BRL: { sim: "R$", nombre: "Reales" },
+  };
+  const monedaDe = (m) => (MONEDAS[m] ? m : "UYU");
+  const redondear2 = (n) => Math.round(Number(n) * 100) / 100;
+  // Número en formato uruguayo: punto de miles y coma de decimales (solo si hacen falta, hasta 2).
+  function fmtNum(n, maxDec) {
+    if (n === null || n === undefined || isNaN(n)) return "—";
+    const d = maxDec === undefined ? 2 : maxDec;
+    const f = Math.pow(10, d);
+    const v = Math.round(Math.abs(n) * f) / f;
+    const partes = v.toFixed(d).split(".");
+    let ent = partes[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    let dec = (partes[1] || "").replace(/0+$/, "");
+    return (n < 0 && v !== 0 ? "-" : "") + ent + (dec ? "," + dec : "");
+  }
+  function fmtMon(moneda, n) {
+    const m = monedaDe(moneda);
+    if (m === "UYU") return fmtMoney(n);
+    return MONEDAS[m].sim + " " + fmtNum(n, 2);
+  }
   function escHtml(s) {
     const d = document.createElement("div");
     d.textContent = s ?? "";
@@ -177,8 +204,6 @@
     // Primero se preparan las fechas y el dashboard (período por defecto: este mes), recién después se
     // cargan los datos y se dibuja todo: así nunca se pinta un número calculado con fechas todavía vacías.
     const hoy = todayStr();
-    document.getElementById("gastos-desde").value = monthStartStr();
-    document.getElementById("gastos-hasta").value = hoy;
     document.getElementById("gasto-fecha").value = hoy;
     document.getElementById("venta-fecha").value = hoy;
     iniciarDashboard();
@@ -190,11 +215,12 @@
     await Promise.all([
       seguro(loadCategorias), seguro(loadProductos), seguro(loadPedidos), seguro(loadGastosTodos),
       seguro(loadMaquinas), seguro(loadCotizaciones), seguro(loadFilamentos), seguro(loadEscalones),
-      seguro(loadCostos),
+      seguro(loadCostos), seguro(loadTc),
     ]);
     dash.loading = false;
     if (pedidosEstado.ok && gastosEstado.ok) dash.lastOkAt = Date.now();
     fillCategoriaSelects();
+    renderTcCards();
     renderDashboard();
     renderPedidos();
     actualizarAvisosPedidos();
@@ -212,7 +238,7 @@
     renderCalcFilRows();
     renderResultados();
 
-    await seguro(() => loadGastos(monthStartStr(), hoy));
+    formMonedaGasto(true);
     renderGastos();
     iniciarAutoRefresh();
   }
@@ -367,20 +393,14 @@
     return true;
   }
 
-  // La lista de la pestaña Gastos (con su propio filtro de fechas)
-  async function loadGastos(desde, hasta) {
-    let q = stratoSb.from("gastos").select("*").order("fecha", { ascending: false });
-    if (desde) q = q.gte("fecha", desde);
-    if (hasta) q = q.lte("fecha", hasta);
-    const { data, error } = await q;
-    if (!error) gastosCache = data || [];
-  }
-
   /* ============ COSTOS DE FABRICACIÓN (privados) ============
      Cada producto (y cada tamaño) puede tener un costo por unidad. Vive en la tabla privada `producto_costos`
      (nunca en `productos`, que lee cualquiera que abra la tienda). Cuando se vende, el costo vigente queda
      copiado en el ítem del pedido (`items[].costo`); los pedidos viejos, que no lo tienen, usan el costo actual. */
   const CAT_EN_COSTO = ["filamento", "electricidad"]; // ya están dentro del costo de las piezas: no se restan dos veces
+  // "Inversión inicial" (máquinas, herramientas, primer stock…): se anota pero NO entra en la caja ni en la ganancia; se ve aparte.
+  const CAT_INVERSION = "inversion inicial";
+  const esInversion = (g) => normCat(g && g.categoria) === CAT_INVERSION;
   const claveCosto = (productoId, tamano) => String(productoId) + "|" + String(tamano || "");
   const COSTO_MAX = 10000000;
 
@@ -404,8 +424,6 @@
     costosEstado = { ok: true, intento: true, falta: false, error: "" };
     return true;
   }
-
-  const redondear2 = (n) => Math.round(Number(n) * 100) / 100;
 
   // Costo real de fabricar la pieza de una cotización: costo base + accesorio. El accesorio se cobra a costo
   // (sin margen), pero igual es plata que sale, así que cuenta para la ganancia neta.
@@ -488,11 +506,338 @@
     }
   };
 
+  /* ============ FILTRO DE FECHAS (compartido por Pedidos, Gastos e Historial de cotizaciones) ============
+     Los mismos períodos que el Resumen: Hoy, 7 días, Este mes, Mes anterior, Todo y Elegir fechas. Cada panel
+     tiene su propio filtro (por defecto "Todo") y filtra por el día de Uruguay, igual que el dashboard. */
+  const FF_OPCIONES = [["hoy", "Hoy"], ["7d", "7 días"], ["mes", "Este mes"], ["mesant", "Mes anterior"], ["todo", "Todo"], ["custom", "Elegir fechas…"]];
+  const FF_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  // Rango de días del filtro ("" = sin límite de ese lado).
+  function ffRango(f) {
+    const hoy = todayStr();
+    switch (f.per) {
+      case "hoy": return { desde: hoy, hasta: hoy, nota: "" };
+      case "7d": return { desde: addDays(hoy, -6), hasta: hoy, nota: "" };
+      case "mes": return { desde: monthStartStr(hoy), hasta: hoy, nota: "" };
+      case "mesant": { const ps = prevMonthStart(hoy); return { desde: ps, hasta: monthEndStr(ps), nota: "" }; }
+      case "custom": {
+        let d = FF_RE.test(f.desde) ? f.desde : "", h = FF_RE.test(f.hasta) ? f.hasta : "", nota = "";
+        if (d && h && d > h) {
+          const t = d; d = h; h = t;
+          nota = "Las fechas estaban al revés; mostramos del " + fmtDMY(d) + " al " + fmtDMY(h) + ".";
+        }
+        return { desde: d, hasta: h, nota: nota };
+      }
+      default: return { desde: "", hasta: "", nota: "" };
+    }
+  }
+  const ffEnRango = (r, dia) => !!dia && (!r.desde || dia >= r.desde) && (!r.hasta || dia <= r.hasta);
+  function ffTexto(r) {
+    if (r.desde && r.hasta) return r.desde === r.hasta ? "Día " + fmtDMY(r.desde) : "Del " + fmtDMY(r.desde) + " al " + fmtDMY(r.hasta);
+    if (r.desde) return "Desde el " + fmtDMY(r.desde);
+    if (r.hasta) return "Hasta el " + fmtDMY(r.hasta);
+    return "Sin límite de fechas";
+  }
+
+  function crearFiltroFecha(el, clave, alCambiar) {
+    const f = { per: "todo", desde: "", hasta: "", clave: clave };
+    el.innerHTML =
+      '<div class="seg seg-card" role="group" aria-label="Período">' +
+      FF_OPCIONES.map((o) => '<button type="button" data-per="' + o[0] + '" aria-pressed="' + (o[0] === "todo" ? "true" : "false") + '">' + o[1] + "</button>").join("") +
+      "</div>" +
+      '<div class="dash-custom" hidden>' +
+      '<div><label for="ff-' + clave + '-desde">Desde</label><input type="date" id="ff-' + clave + '-desde"></div>' +
+      '<div><label for="ff-' + clave + '-hasta">Hasta</label><input type="date" id="ff-' + clave + '-hasta"></div>' +
+      '<div><button type="button" class="btn-secondary" data-ff="aplicar">Aplicar</button></div></div>' +
+      '<p class="ff-resumen" aria-live="polite"></p>';
+    const inD = el.querySelector("#ff-" + clave + "-desde");
+    const inH = el.querySelector("#ff-" + clave + "-hasta");
+    const caja = el.querySelector(".dash-custom");
+    const res = el.querySelector(".ff-resumen");
+    function pintar() {
+      el.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.per === f.per ? "true" : "false"));
+      caja.hidden = f.per !== "custom";
+      const r = ffRango(f);
+      res.textContent = f.per === "todo" ? "" : r.nota || ffTexto(r);
+    }
+    function aplicarFechas() {
+      f.desde = inD.value;
+      f.hasta = inH.value;
+      pintar();
+      alCambiar();
+    }
+    f.poner = function (per) {
+      f.per = per;
+      if (per === "custom") {
+        const hoy = todayStr();
+        if (!f.desde) f.desde = monthStartStr(hoy);
+        if (!f.hasta) f.hasta = hoy;
+        inD.value = f.desde;
+        inH.value = f.hasta;
+      }
+      pintar();
+    };
+    f.reiniciar = function () { f.per = "todo"; f.desde = ""; f.hasta = ""; inD.value = ""; inH.value = ""; pintar(); };
+    f.rango = () => ffRango(f);
+    f.dentro = (dia) => ffEnRango(ffRango(f), dia);
+    f.activo = () => f.per !== "todo";
+    el.querySelector(".seg").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-per]");
+      if (!b) return;
+      f.poner(b.dataset.per);
+      alCambiar();
+      if (b.dataset.per === "custom") inD.focus({ preventScroll: true });
+    });
+    inD.addEventListener("change", aplicarFechas);
+    inH.addEventListener("change", aplicarFechas);
+    caja.querySelector("[data-ff='aplicar']").addEventListener("click", aplicarFechas);
+    pintar();
+    return f;
+  }
+
+  /* ============ TIPO DE CAMBIO ============
+     Cuántos pesos uruguayos vale 1 dólar y 1 real. Se guarda en la tabla `ajustes` (una fila "tipos_cambio").
+     Si esa tabla todavía no existe (falta correr migracion_monedas_inversion.sql) se guarda solo en este navegador. */
+  const TC_CLAVE = "tipos_cambio";
+  const TC_LS = "strato-tipos-cambio";
+  let tc = { USD: 0, BRL: 0, actualizado: "", origen: "ninguno" }; // origen: base | navegador | ninguno
+  const tcValido = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n <= 100000 ? n : 0; };
+  const TC_FALTA_TABLA = /ajustes|schema cache|42P01|PGRST205|does not exist/i;
+
+  async function loadTc() {
+    let leido = null, origen = "base";
+    try {
+      const r = await stratoSb.from("ajustes").select("*").eq("clave", TC_CLAVE);
+      if (!r.error && r.data && r.data[0]) leido = r.data[0].valor;
+    } catch (e) { /* sin conexión: se intenta con lo guardado en este navegador */ }
+    if (!leido || typeof leido !== "object") {
+      leido = null;
+      try {
+        const l = localStorage.getItem(TC_LS);
+        if (l) { leido = JSON.parse(l); origen = "navegador"; }
+      } catch (e) { leido = null; }
+    }
+    if (leido && typeof leido === "object") {
+      tc = { USD: tcValido(leido.USD), BRL: tcValido(leido.BRL), actualizado: FF_RE.test(String(leido.actualizado || "")) ? leido.actualizado : "", origen: origen };
+    }
+    return true;
+  }
+
+  async function guardarTc(usd, brl) {
+    const valor = { USD: usd, BRL: brl, actualizado: todayStr() };
+    let error = null;
+    try {
+      const r = await stratoSb.from("ajustes").upsert([{ clave: TC_CLAVE, valor: valor, updated_at: new Date().toISOString() }], { onConflict: "clave" }).select();
+      error = r.error;
+    } catch (e) {
+      error = { message: e && e.message ? e.message : "error de conexión" };
+    }
+    if (error) {
+      if (!TC_FALTA_TABLA.test(String(error.message || "") + " " + String(error.code || ""))) return { ok: false, error: error.message || "error de conexión" };
+      try { localStorage.setItem(TC_LS, JSON.stringify(valor)); } catch (e) { return { ok: false, error: "No se pudo guardar (ni en la base ni en este navegador)." }; }
+      tc = { USD: usd, BRL: brl, actualizado: valor.actualizado, origen: "navegador" };
+      return { ok: true, soloNavegador: true };
+    }
+    try { localStorage.removeItem(TC_LS); } catch (e) { /* da igual */ }
+    tc = { USD: usd, BRL: brl, actualizado: valor.actualizado, origen: "base" };
+    return { ok: true };
+  }
+
+  function tcInfoTexto() {
+    if (!tc.USD && !tc.BRL) return "Todavía no cargaste el tipo de cambio.";
+    return (tc.actualizado ? "Actualizado el " + fmtDMY(tc.actualizado) + "." : "") +
+      (tc.origen === "navegador" ? " Guardado solo en este navegador: para que quede en la base, corré supabase/migracion_monedas_inversion.sql en Supabase." : "");
+  }
+
+  function renderTcCards() {
+    ["gastos", "filamentos"].forEach((k) => {
+      const el = document.getElementById("tc-card-" + k);
+      if (!el) return;
+      el.innerHTML =
+        "<h2>Tipo de cambio</h2>" +
+        '<p class="muted" style="font-size:12px;margin-bottom:14px;">Cuántos pesos uruguayos vale cada moneda. Se usa para pasar a pesos los gastos nuevos en dólares o reales, y para los filamentos con precio en dólares (esos se recalculan solos cuando cambiás el dólar). Cada gasto ya cargado conserva el cambio con el que se cargó.</p>' +
+        '<div class="tc-row">' +
+        '<div><label for="tc-usd-' + k + '">1 dólar (US$) vale, en $U</label><input type="number" id="tc-usd-' + k + '" min="0" step="any" inputmode="decimal" value="' + (tc.USD ? tc.USD : "") + '"></div>' +
+        '<div><label for="tc-brl-' + k + '">1 real (R$) vale, en $U</label><input type="number" id="tc-brl-' + k + '" min="0" step="any" inputmode="decimal" value="' + (tc.BRL ? tc.BRL : "") + '"></div>' +
+        '<div><button type="button" class="btn-secondary" data-tc="guardar">Guardar</button></div></div>' +
+        '<p class="tc-info" id="tc-info-' + k + '" role="status">' + escHtml(tcInfoTexto()) + "</p>" +
+        '<div class="error-msg" id="tc-err-' + k + '" role="alert"></div>';
+    });
+  }
+
+  async function guardarTcDesde(k) {
+    const errEl = document.getElementById("tc-err-" + k);
+    errEl.textContent = "";
+    const rawU = document.getElementById("tc-usd-" + k).value.trim();
+    const rawB = document.getElementById("tc-brl-" + k).value.trim();
+    const usd = rawU === "" ? tc.USD : tcValido(rawU);
+    const brl = rawB === "" ? tc.BRL : tcValido(rawB);
+    if (rawU !== "" && !usd) { errEl.textContent = "El valor del dólar tiene que ser un número mayor a 0."; return; }
+    if (rawB !== "" && !brl) { errEl.textContent = "El valor del real tiene que ser un número mayor a 0."; return; }
+    if (!usd && !brl) { errEl.textContent = "Cargá al menos el valor del dólar o del real."; return; }
+    const btn = document.querySelector("#tc-card-" + k + " [data-tc='guardar']");
+    if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
+    const r = await guardarTc(usd, brl);
+    if (!r.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = "Guardar"; }
+      errEl.textContent = "No se pudo guardar el tipo de cambio (" + r.error + ").";
+      return;
+    }
+    renderTcCards();
+    tcCambio();
+    const nb = document.querySelector("#tc-card-" + k + " [data-tc='guardar']");
+    if (nb) nb.focus({ preventScroll: true });
+  }
+  ["gastos", "filamentos"].forEach((k) => {
+    document.getElementById("tc-card-" + k).addEventListener("click", (e) => {
+      if (e.target.closest("[data-tc='guardar']")) guardarTcDesde(k);
+    });
+    document.getElementById("tc-card-" + k).addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.matches("input")) { e.preventDefault(); guardarTcDesde(k); }
+    });
+  });
+
+  /* ============ EXCEL (.xlsx armado acá mismo, sin librerías ni internet) ============
+     Un .xlsx es un zip de archivos XML. Se arma con un zip "sin compresión" (alcanza para planillas de texto
+     y números) para no depender de nada externo. */
+  const CRC_TABLA = (function () {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(u8) {
+    let c = 0xffffffff;
+    for (let i = 0; i < u8.length; i++) c = CRC_TABLA[(c ^ u8[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+  function zipSinComprimir(archivos) {
+    const enc = new TextEncoder();
+    const ahora = new Date();
+    const dosHora = (ahora.getUTCHours() << 11) | (ahora.getUTCMinutes() << 5) | (ahora.getUTCSeconds() >> 1);
+    const dosFecha = (Math.max(0, ahora.getUTCFullYear() - 1980) << 9) | ((ahora.getUTCMonth() + 1) << 5) | ahora.getUTCDate();
+    const partes = [], central = [];
+    let offset = 0;
+    archivos.forEach((a) => {
+      const nombre = enc.encode(a.nombre);
+      const datos = typeof a.datos === "string" ? enc.encode(a.datos) : a.datos;
+      const crc = crc32(datos);
+      const lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+      lh.setUint16(10, dosHora, true); lh.setUint16(12, dosFecha, true); lh.setUint32(14, crc, true);
+      lh.setUint32(18, datos.length, true); lh.setUint32(22, datos.length, true); lh.setUint16(26, nombre.length, true); lh.setUint16(28, 0, true);
+      partes.push(new Uint8Array(lh.buffer), nombre, datos);
+      const ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+      ch.setUint16(12, dosHora, true); ch.setUint16(14, dosFecha, true); ch.setUint32(16, crc, true);
+      ch.setUint32(20, datos.length, true); ch.setUint32(24, datos.length, true); ch.setUint16(28, nombre.length, true);
+      ch.setUint16(30, 0, true); ch.setUint16(32, 0, true); ch.setUint16(34, 0, true); ch.setUint16(36, 0, true); ch.setUint32(38, 0, true); ch.setUint32(42, offset, true);
+      central.push(new Uint8Array(ch.buffer), nombre);
+      offset += 30 + nombre.length + datos.length;
+    });
+    let tamCentral = 0;
+    central.forEach((c) => { tamCentral += c.length; });
+    const fin = new DataView(new ArrayBuffer(22));
+    fin.setUint32(0, 0x06054b50, true); fin.setUint16(4, 0, true); fin.setUint16(6, 0, true);
+    fin.setUint16(8, archivos.length, true); fin.setUint16(10, archivos.length, true);
+    fin.setUint32(12, tamCentral, true); fin.setUint32(16, offset, true); fin.setUint16(20, 0, true);
+    return new Blob(partes.concat(central, [new Uint8Array(fin.buffer)]), { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
+  const xmlEsc = (s) =>
+    String(s)
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  function colLetra(i) {
+    let s = "", n = i + 1;
+    while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+    return s;
+  }
+  // "2026-10-13" -> número de serie de Excel (días desde 1899-12-30)
+  function serieExcel(dia) {
+    if (!FF_RE.test(dia || "")) return null;
+    return Math.round((Date.UTC(Number(dia.slice(0, 4)), Number(dia.slice(5, 7)) - 1, Number(dia.slice(8, 10))) - Date.UTC(1899, 11, 30)) / 864e5);
+  }
+  // Estilos: 0 normal · 1 encabezado · 2 fecha · 3 dinero entero · 4 dinero con centavos · 5 texto que se ajusta al ancho
+  const XLSX_ESTILO = { texto: 0, encabezado: 1, fecha: 2, dinero: 3, dinero2: 4, ajustado: 5 };
+  function hojaXml(h) {
+    const ult = colLetra(h.cols.length - 1) + (h.filas.length + 1);
+    let x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+      '<sheetFormatPr defaultRowHeight="15"/><cols>' +
+      h.cols.map((c, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + (c.w || 14) + '" customWidth="1"/>').join("") +
+      "</cols><sheetData>";
+    x += '<row r="1">' + h.cols.map((c, i) => '<c r="' + colLetra(i) + '1" s="1" t="inlineStr"><is><t>' + xmlEsc(c.t) + "</t></is></c>").join("") + "</row>";
+    h.filas.forEach((fila, r) => {
+      const n = r + 2;
+      x += '<row r="' + n + '">';
+      h.cols.forEach((c, i) => {
+        const v = fila[i];
+        if (v === null || v === undefined || v === "") return;
+        const ref = colLetra(i) + n;
+        if (c.tipo === "fecha") {
+          const s = serieExcel(v);
+          if (s !== null) x += '<c r="' + ref + '" s="2"><v>' + s + "</v></c>";
+        } else if (c.tipo === "dinero" || c.tipo === "dinero2" || c.tipo === "numero") {
+          const nv = Number(v);
+          if (Number.isFinite(nv)) x += '<c r="' + ref + '"' + (c.tipo === "numero" ? "" : ' s="' + XLSX_ESTILO[c.tipo] + '"') + "><v>" + nv + "</v></c>";
+        } else {
+          x += '<c r="' + ref + '" s="' + (c.ajustar ? 5 : 0) + '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + "</t></is></c>";
+        }
+      });
+      x += "</row>";
+    });
+    x += '</sheetData><autoFilter ref="A1:' + ult + '"/><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>';
+    return x;
+  }
+  function xlsxBlob(hojas) {
+    const ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+    const archivos = [
+      { nombre: "[Content_Types].xml", datos: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+          hojas.map((h, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join("") + "</Types>" },
+      { nombre: "_rels/.rels", datos: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { nombre: "xl/workbook.xml", datos: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook ' + ns + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+          hojas.map((h, i) => '<sheet name="' + xmlEsc(h.nombre) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join("") + "</sheets></workbook>" },
+      { nombre: "xl/_rels/workbook.xml.rels", datos: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          hojas.map((h, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join("") +
+          '<Relationship Id="rId' + (hojas.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { nombre: "xl/styles.xml", datos: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet ' + ns + '><numFmts count="1"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/></numFmts>' +
+          '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
+          '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFE6E4"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+          '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+          '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+          '<cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+          '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+          '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+          '<xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+          '<xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+          '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs>' +
+          '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>' },
+    ];
+    hojas.forEach((h, i) => archivos.push({ nombre: "xl/worksheets/sheet" + (i + 1) + ".xml", datos: hojaXml(h) }));
+    return zipSinComprimir(archivos);
+  }
+  function descargarBlob(blob, nombre) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nombre;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
   /* ============ DASHBOARD ============ */
   const TITLE_BASE = document.title;
   const PER_KEY = "strato-dash-periodo";
   const PERIODOS = ["hoy", "7d", "mes", "mesant", "todo", "custom"];
-  const CAT_LABEL = { filamento: "Filamento", electricidad: "Electricidad", envios: "Envíos", herramientas: "Herramientas", marketing: "Marketing", otro: "Otro" };
+  const CAT_LABEL = { filamento: "Filamento", electricidad: "Electricidad", envios: "Envíos", herramientas: "Herramientas", marketing: "Marketing", otro: "Otro", "inversion inicial": "Inversión inicial" };
   const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
   const MAX_NUEVOS = 15;
   const dash = { per: "mes", desde: "", hasta: "", loading: false, visibleLoading: false, lastOkAt: 0, chart: null };
@@ -630,7 +975,10 @@
     const ok = ped.filter((p) => p.estado !== "cancelado"); // un pedido cancelado no es ingreso
     const ingresos = suma(ok, (p) => p.subtotal);
     const entregados = suma(ok.filter((p) => p.estado === "entregado"), (p) => p.subtotal);
-    const gastos = gastosAll.filter((g) => g._f >= a && g._f <= b);
+    const gastosPeriodo = gastosAll.filter((g) => g._f >= a && g._f <= b);
+    const inversion = gastosPeriodo.filter(esInversion); // aparte: no cuenta en caja ni en ganancia
+    const gastos = gastosPeriodo.filter((g) => !esInversion(g));
+    const totalInversion = suma(inversion, (g) => g.monto);
     const totalGastos = suma(gastos, (g) => g.monto);
     const saldo = ingresos - totalGastos;
 
@@ -652,6 +1000,8 @@
       ingresos: ingresos,
       entregados: entregados,
       gastos: gastos,
+      inversion: inversion,
+      totalInversion: totalInversion,
       totalGastos: totalGastos,
       saldo: saldo,
       ticket: ok.length ? ingresos / ok.length : 0,
@@ -958,7 +1308,8 @@
     const listaCats = Object.keys(cats)
       .map((k) => ({ nombre: escHtml(CAT_LABEL[k] || (String(k).charAt(0).toUpperCase() + String(k).slice(1))), valor: cats[k] }))
       .sort((a, b) => b.valor - a.valor);
-    document.getElementById("dash-gastos-hint").textContent = !hayG ? "Todavía no hay datos para mostrar." : cur.gastos.length ? "Total " + fmtMoney(cur.totalGastos) + " en " + cur.gastos.length + (cur.gastos.length === 1 ? " gasto" : " gastos") : "Sin gastos en este período.";
+    const notaInv = cur.inversion.length ? " Inversión inicial aparte: " + fmtMoney(cur.totalInversion) + " (no cuenta en la caja ni en la ganancia)." : "";
+    document.getElementById("dash-gastos-hint").textContent = !hayG ? "Todavía no hay datos para mostrar." : (cur.gastos.length ? "Total " + fmtMoney(cur.totalGastos) + " en " + cur.gastos.length + (cur.gastos.length === 1 ? " gasto" : " gastos") + "." : "Sin gastos en este período.") + notaInv;
     document.getElementById("dash-gastos-bars").innerHTML = hayG ? barrasHtml(listaCats, cur.totalGastos) : "";
 
     // --- Ventas por canal ---
@@ -1069,6 +1420,9 @@
     if (cur.pedEstimado > 0) {
       notas.push({ warn: false, html: "En " + cur.pedEstimado + (cur.pedEstimado === 1 ? " pedido" : " pedidos") + " se usó el costo actual del producto, porque no quedó guardado al vender." });
     }
+    if (cur.totalInversion > 0) {
+      notas.push({ warn: false, html: "Inversión inicial del período (" + fmtMoney(cur.totalInversion) + ") no se resta de la ganancia ni de la caja: se ve aparte." });
+    }
     if (cur.gastosEnCosto > 0) {
       notas.push({ warn: false, html: "Filamento y electricidad cargados en Gastos (" + fmtMoney(cur.gastosEnCosto) + ") no se restan otra vez: ya están en el costo de las piezas." });
     }
@@ -1126,7 +1480,7 @@
   }
 
   function firmaDe() {
-    return pedidosCache.length + "|" + pedidosCache.map((p) => p.id + ":" + p.estado).join(",");
+    return pedidosCache.length + "|" + pedidosCache.map((p) => p.id + ":" + p.estado + ":" + p.subtotal).join(",");
   }
 
   async function refreshDatos(op) {
@@ -1147,6 +1501,7 @@
       loadPedidos().catch(() => false), loadGastosTodos().catch(() => false), reintentaCostos ? loadCostos().catch(() => false) : null,
     ]);
     if (reintentaCostos && costosEstado.ok) { renderProductos(); renderProdCostos(); }
+    renderGastos();
     dash.loading = false;
     dash.visibleLoading = false;
     btn.disabled = false;
@@ -1181,6 +1536,41 @@
   const elPedidosMsg = document.getElementById("pedidos-msg");
   let msgTimer = null;
   let msgTipo = "";
+
+  /* Grupos de la lista: Activos (todo lo que sigue en marcha), Finalizados (entregados) y Cancelados. */
+  const GRUPOS = {
+    activos: { label: "Activos", estados: ["nuevo", "confirmado", "en_produccion", "listo"] },
+    finalizados: { label: "Finalizados", estados: ["entregado"] },
+    cancelados: { label: "Cancelados", estados: ["cancelado"] },
+    todos: { label: "Todos", estados: ESTADOS.slice() },
+  };
+  // Un estado raro (que no es ninguno de los seis) se muestra en Activos para que no quede escondido.
+  const grupoDe = (estado) => (estado === "entregado" ? "finalizados" : estado === "cancelado" ? "cancelados" : "activos");
+  let pedidosGrupo = "activos";
+  const ffPedidos = crearFiltroFecha(document.getElementById("pedidos-fecha"), "pedidos", () => renderPedidos());
+
+  // El selector de estado solo ofrece los estados del grupo elegido (y se oculta si el grupo tiene uno solo).
+  function poblarFiltroEstado() {
+    const est = GRUPOS[pedidosGrupo].estados;
+    elFiltroEstado.innerHTML =
+      '<option value="todos">' + (pedidosGrupo === "todos" ? "Todos los estados" : "Todos los " + GRUPOS[pedidosGrupo].label.toLowerCase()) + "</option>" +
+      est.map((e) => '<option value="' + e + '">' + ESTADO_LABEL[e] + "</option>").join("");
+    elFiltroEstado.value = "todos";
+    elFiltroEstado.hidden = est.length < 2;
+  }
+  function setGrupoPedidos(g, estado) {
+    pedidosGrupo = GRUPOS[g] ? g : "activos";
+    document.querySelectorAll("#pedidos-grupos button[data-grupo]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.grupo === pedidosGrupo ? "true" : "false"));
+    poblarFiltroEstado();
+    if (estado && GRUPOS[pedidosGrupo].estados.includes(estado)) elFiltroEstado.value = estado;
+  }
+  poblarFiltroEstado();
+  document.getElementById("pedidos-grupos").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-grupo]");
+    if (!b) return;
+    setGrupoPedidos(b.dataset.grupo);
+    renderPedidos();
+  });
 
   elBuscar.addEventListener("input", renderPedidos);
   elFiltroEstado.addEventListener("change", renderPedidos);
@@ -1239,19 +1629,36 @@
     renderPedidos();
   }
 
-  function renderPedidos() {
+  // Pedidos que cumplen búsqueda, canal y fechas (sin mirar el grupo ni el estado): de acá salen los números de los chips.
+  function pedidosBase() {
     const term = elBuscar.value.trim().toLowerCase();
-    const estadoFiltro = elFiltroEstado.value;
     const canalFiltro = elFiltroCanal.value;
+    const rango = ffPedidos.rango();
+    return pedidosCache.filter((p) => {
+      if (canalFiltro !== "todos" && p.canal !== canalFiltro) return false;
+      if (!ffEnRango(rango, p._dia)) return false;
+      if (term && ![p.cliente_nombre, p.cliente_telefono, p.cliente_email].filter(Boolean).join(" ").toLowerCase().includes(term)) return false;
+      return true;
+    });
+  }
+  // Lo que se ve en la lista (y lo que baja el Excel).
+  function pedidosVisibles(base) {
+    const estadoFiltro = elFiltroEstado.value;
+    const g = pedidosGrupo;
+    return (base || pedidosBase()).filter((p) => (g === "todos" || grupoDe(p.estado) === g) && (estadoFiltro === "todos" || p.estado === estadoFiltro));
+  }
+  function actualizarChipsPedidos(base) {
+    const n = { activos: 0, finalizados: 0, cancelados: 0, todos: base.length };
+    base.forEach((p) => { n[grupoDe(p.estado)]++; });
+    document.querySelectorAll("#pedidos-grupos .seg-n").forEach((el) => {
+      el.textContent = pedidosEstado.hayDatos ? "(" + n[el.dataset.n] + ")" : "";
+    });
+  }
 
-    let list = pedidosCache;
-    if (estadoFiltro !== "todos") list = list.filter((p) => p.estado === estadoFiltro);
-    if (canalFiltro !== "todos") list = list.filter((p) => p.canal === canalFiltro);
-    if (term) {
-      list = list.filter((p) =>
-        [p.cliente_nombre, p.cliente_telefono, p.cliente_email].filter(Boolean).join(" ").toLowerCase().includes(term)
-      );
-    }
+  function renderPedidos() {
+    const base = pedidosBase();
+    actualizarChipsPedidos(base);
+    const list = pedidosVisibles(base);
 
     document.getElementById("pedidos-empty").style.display = list.length ? "none" : "block";
     document.getElementById("pedidos-count").textContent =
@@ -1271,7 +1678,9 @@
           '</td><td data-label="Cliente"><span>' + escHtml(p.cliente_nombre) + canalTag(p.canal) + "<br><span class='muted'>" + escHtml(p.cliente_telefono) + '</span></span></td><td data-label="Items">' +
           resumenItems(p.items) + '</td><td data-label="Subtotal">' + fmtMoney(p.subtotal) + '</td><td data-label="Entrega">' + escHtml(p.entrega) +
           '</td><td data-label="Estado"><select class="estado-select estado-' + estadoClase + '" data-id="' + id + '" aria-label="Estado del pedido de ' + escAttr(p.cliente_nombre) + '">' +
-          estadoOptions + '</select></td><td class="act"><button type="button" class="btn-secondary btn-small btn-detalle" aria-expanded="false" aria-controls="detalle-' + id + '">Detalle</button></td></tr>' +
+          estadoOptions + '</select></td><td class="act"><div class="row-acts"><button type="button" class="btn-secondary btn-small btn-detalle" aria-expanded="false" aria-controls="detalle-' + id + '">Detalle</button>' +
+          '<button type="button" class="btn-secondary btn-small" data-act="editar-pedido" data-id="' + id + '" aria-label="Editar el pedido de ' + escAttr(p.cliente_nombre) + '">Editar</button>' +
+          '<button type="button" class="btn-danger btn-small" data-act="eliminar-pedido" data-id="' + id + '" aria-label="Eliminar el pedido de ' + escAttr(p.cliente_nombre) + '">Eliminar</button></div></td></tr>' +
           '<tr class="detalle-row hidden-row" id="detalle-' + id + '" data-detalle-de="' + id + '"><td colspan="7">' + detallePedido(p) + "</td></tr>"
         );
       })
@@ -1341,6 +1750,12 @@
   // Un solo manejador para toda la tabla (en vez de código dentro de cada fila).
   elPedidosTbody.addEventListener("click", (e) => {
     if (e.target.closest("select, a, input")) return;
+    const accion = e.target.closest("button[data-act]");
+    if (accion) {
+      if (accion.dataset.act === "editar-pedido") abrirEdicionPedido(accion.dataset.id);
+      else if (accion.dataset.act === "eliminar-pedido") eliminarPedido(accion.dataset.id);
+      return;
+    }
     const tr = e.target.closest("tr[data-pedido-id]");
     if (tr) toggleDetalle(tr.dataset.pedidoId);
   });
@@ -1380,7 +1795,14 @@
       sel.disabled = false;
       sel.className = "estado-select estado-" + nuevoEstado;
     }
-    if (elFiltroEstado.value !== "todos") renderPedidos(); // el pedido puede dejar de coincidir con el filtro
+    // El pedido puede pasar a otro grupo (por ejemplo de Activos a Finalizados) y dejar de verse en la lista actual.
+    const sigueVisible = pedidosVisibles().some((x) => String(x.id) === String(id));
+    if (!sigueVisible) {
+      renderPedidos();
+      mostrarMsgPedidos("ok", "El pedido de " + (p.cliente_nombre || "este cliente") + " pasó a «" + (ESTADO_LABEL[nuevoEstado] || nuevoEstado) + "» y ahora está en " + GRUPOS[grupoDe(nuevoEstado)].label + ".");
+    } else {
+      actualizarChipsPedidos(pedidosBase());
+    }
     renderDashboard();
     actualizarBadge();
   }
@@ -1389,8 +1811,9 @@
   function irAPedidos(estado, id) {
     activarPanel(document.getElementById("tab-pedidos"), false);
     elBuscar.value = "";
-    elFiltroEstado.value = estado && ESTADOS.includes(estado) ? estado : "todos";
     elFiltroCanal.value = "todos";
+    ffPedidos.reiniciar(); // los números del Resumen son de todo el historial: se muestra sin filtro de fechas
+    setGrupoPedidos(estado && ESTADOS.includes(estado) ? grupoDe(estado) : "todos", estado && ESTADOS.includes(estado) ? estado : null);
     pedidosSucio = false;
     renderPedidos();
     const rows = elPedidosTbody.querySelectorAll("tr[data-pedido-id]");
@@ -1564,8 +1987,22 @@
     if (f) { f.precio.value = String(ventaOrigen.sugerido); actualizarTotalVenta(); }
   });
 
+  // Vuelve el formulario a "venta nueva": saca las opciones y campos que solo existen al editar un pedido.
+  function salirModoEdicion() {
+    ventaEditId = null;
+    ventaEditOrig = null;
+    document.getElementById("venta-titulo").textContent = "Venta manual";
+    document.getElementById("venta-ayuda").hidden = false;
+    document.getElementById("venta-edit-banner").hidden = true;
+    document.getElementById("venta-edit-extra").hidden = true;
+    document.getElementById("venta-guardar").textContent = "Guardar venta";
+    ["venta-canal-web", "venta-estado-cancelado"].forEach((id) => { const o = document.getElementById(id); o.hidden = true; o.disabled = true; });
+    ["venta-entrega", "venta-pago", "venta-estado"].forEach((id) => document.getElementById(id).querySelectorAll("option[data-temp]").forEach((o) => o.remove()));
+  }
+
   function resetVenta() {
     ventaOrigen = null;
+    salirModoEdicion();
     mostrarOrigenVenta();
     document.getElementById("form-venta").reset();
     document.getElementById("venta-fecha").value = todayStr();
@@ -1584,7 +2021,8 @@
   }
   function abrirVenta() {
     activarPanel(document.getElementById("tab-pedidos"), false);
-    if (elVentaBody.hidden) {
+    if (!elVentaBody.hidden && ventaEditId !== null && !confirm("Estás editando un pedido. ¿Descartar los cambios y cargar una venta nueva?")) return;
+    if (elVentaBody.hidden || ventaEditId !== null) {
       resetVenta();
       elVentaBody.hidden = false;
       elVentaToggle.setAttribute("aria-expanded", "true");
@@ -1598,7 +2036,7 @@
     const c = cotizacionesCache.find((x) => x.id === id);
     if (!c) return;
     if (!elVentaBody.hidden) {
-      const hayAlgo = document.getElementById("venta-cliente").value.trim() !== "" || filasVenta().some((f) => f.precio.value !== "");
+      const hayAlgo = ventaEditId !== null || document.getElementById("venta-cliente").value.trim() !== "" || filasVenta().some((f) => f.precio.value !== "");
       if (hayAlgo && !confirm("Ya tenés una venta a medio cargar. ¿Reemplazarla por esta cotización?")) return;
     }
     const sugerido = Math.round(num(c.total_a_cobrar));
@@ -1624,6 +2062,180 @@
     elVentaBody.scrollIntoView({ behavior: "auto", block: "start" });
     (document.getElementById("venta-cliente").value ? f.precio : document.getElementById("venta-cliente")).focus({ preventScroll: true });
   }
+
+  /* ---- Editar un pedido (usa el mismo formulario que la venta manual) ---- */
+  // Asegura que el desplegable tenga el valor guardado (los pedidos de la web traen textos propios de entrega y pago).
+  function asegurarOpcion(selectId, valor) {
+    const sel = document.getElementById(selectId);
+    if (valor === null || valor === undefined || valor === "") { sel.value = ""; if (sel.value !== "") sel.selectedIndex = 0; return; }
+    let o = Array.from(sel.options).find((x) => x.value === valor);
+    if (!o) {
+      o = document.createElement("option");
+      o.value = valor;
+      o.textContent = valor;
+      o.dataset.temp = "1";
+      sel.appendChild(o);
+    }
+    sel.value = valor;
+  }
+
+  function abrirEdicionPedido(id) {
+    const p = pedidosCache.find((x) => String(x.id) === String(id));
+    if (!p) return;
+    if (!elVentaBody.hidden) {
+      const hayAlgo = ventaEditId !== null || document.getElementById("venta-cliente").value.trim() !== "" || filasVenta().some((f) => f.precio.value !== "");
+      if (hayAlgo && !confirm("Ya tenés una venta o una edición a medio cargar. ¿Reemplazarla por este pedido?")) return;
+    }
+    activarPanel(document.getElementById("tab-pedidos"), false);
+    resetVenta();
+    ventaEditId = p.id;
+    ventaEditOrig = JSON.parse(JSON.stringify(p));
+    document.getElementById("venta-titulo").textContent = "Editar pedido";
+    document.getElementById("venta-ayuda").hidden = true;
+    document.getElementById("venta-guardar").textContent = "Guardar cambios";
+    const ban = document.getElementById("venta-edit-banner");
+    ban.textContent = "Estás editando el pedido de " + (p.cliente_nombre || "—") + " del " + fmtFecha(p.created_at) + ". Los cambios reemplazan lo guardado; no se avisa al cliente.";
+    ban.hidden = false;
+    document.getElementById("venta-edit-extra").hidden = false;
+
+    // Opciones que solo existen al editar: canal Web, estado Cancelado y los textos propios de los pedidos de la web
+    const web = document.getElementById("venta-canal-web");
+    web.hidden = p.canal !== "web";
+    web.disabled = p.canal !== "web";
+    const canc = document.getElementById("venta-estado-cancelado");
+    canc.hidden = false;
+    canc.disabled = false;
+    document.getElementById("venta-canal").value = CANALES.includes(p.canal) ? p.canal : "otro";
+    if (ESTADOS.includes(p.estado)) {
+      document.getElementById("venta-estado").value = p.estado;
+    } else {
+      asegurarOpcion("venta-estado", p.estado);
+    }
+    document.getElementById("venta-fecha").value = p._dia || todayStr();
+    document.getElementById("venta-cliente").value = p.cliente_nombre || "";
+    document.getElementById("venta-contacto").value = p.cliente_telefono && p.cliente_telefono !== "—" ? p.cliente_telefono : "";
+    asegurarOpcion("venta-entrega", p.entrega || "Retiro / en mano");
+    asegurarOpcion("venta-pago", p.pago || "");
+    document.getElementById("venta-notas").value = p.notas || "";
+    document.getElementById("venta-email").value = p.cliente_email || "";
+    document.getElementById("venta-direccion").value = p.direccion || "";
+
+    elVentaItems.innerHTML = "";
+    const items = Array.isArray(p.items) && p.items.length ? p.items : [null];
+    items.forEach((it) => {
+      const row = agregarFilaVenta();
+      if (!it) return;
+      const f = { sel: row.querySelector(".venta-prod"), qty: row.querySelector(".venta-qty"), precio: row.querySelector(".venta-precio"), costo: row.querySelector(".venta-costo"), otro: row.querySelector(".venta-otro") };
+      const idx = it.producto_id ? ventaOpc.findIndex((o) => o.pid === it.producto_id && (o.tam || null) === (it.tamano || null)) : -1;
+      if (idx >= 0) {
+        f.sel.value = String(idx);
+      } else {
+        f.sel.value = "otro";
+        f.otro.hidden = false;
+        f.otro.value = limpiarTexto(it.nombre || "", 80);
+      }
+      f.qty.value = String(num(it.qty) || 1);
+      f.precio.value = it.precio === null || it.precio === undefined ? "" : String(it.precio);
+      f.costo.value = it.costo === null || it.costo === undefined || it.costo === "" ? "" : String(it.costo);
+      row._item = it;
+      if (it.cotizacion_id) row.dataset.cot = it.cotizacion_id;
+    });
+    actualizarTotalVenta();
+    elVentaBody.hidden = false;
+    elVentaToggle.setAttribute("aria-expanded", "true");
+    elVentaToggle.textContent = "Cerrar";
+    elVentaError.textContent = "";
+    elVentaBody.scrollIntoView({ behavior: "auto", block: "start" });
+    document.getElementById("venta-cliente").focus({ preventScroll: true });
+  }
+
+  async function eliminarPedido(id) {
+    const p = pedidosCache.find((x) => String(x.id) === String(id));
+    if (!p) return;
+    const txt = "¿Eliminar el pedido de " + (p.cliente_nombre || "este cliente") + " (" + fmtMoney(num(p.subtotal)) + ", " + fmtFecha(p.created_at) + ")?\n\n" +
+      "Se borra para siempre y deja de contar en el dashboard. Si solo querés que no cuente, mejor cambiá su estado a Cancelado.";
+    if (!confirm(txt)) return;
+    let res;
+    try {
+      res = await stratoSb.from("pedidos").delete().eq("id", id).select("id");
+    } catch (e) {
+      mostrarMsgPedidos("err", "No se pudo eliminar el pedido (" + (e && e.message ? e.message : "error de conexión") + ").");
+      return;
+    }
+    if (res.error) {
+      const t = String(res.error.message || "") + " " + String(res.error.code || "");
+      mostrarMsgPedidos("err", "No se pudo eliminar el pedido (" + res.error.message + ")." + (/permission denied|42501|row-level/i.test(t) ? " Falta el permiso en Supabase: corré supabase/migracion_monedas_inversion.sql." : ""));
+      return;
+    }
+    if (Array.isArray(res.data) && res.data.length === 0) {
+      mostrarMsgPedidos("err", "El pedido no se eliminó (no se encontró o falta el permiso en Supabase: corré supabase/migracion_monedas_inversion.sql).");
+      return;
+    }
+    pedidosCache = pedidosCache.filter((x) => String(x.id) !== String(id));
+    if (ventaEditId !== null && String(ventaEditId) === String(id)) { resetVenta(); cerrarVenta(); }
+    renderPedidos();
+    renderDashboard();
+    actualizarBadge();
+    renderCotizaciones();
+    mostrarMsgPedidos("ok", "Pedido eliminado: " + (p.cliente_nombre || "—") + " · " + fmtMoney(num(p.subtotal)) + ".");
+  }
+
+  /* ---- Descargar en Excel lo que se ve en la lista ---- */
+  const itemTexto = (it) => {
+    it = it || {};
+    const extras = [it.tamano, it.color].filter(Boolean).join(", ");
+    return num(it.qty) + "× " + (it.nombre || "Sin nombre") + (extras ? " (" + extras + ")" : "");
+  };
+  function descripcionFiltrosPedidos() {
+    const partes = [GRUPOS[pedidosGrupo].label];
+    if (elFiltroEstado.value !== "todos") partes.push(ESTADO_LABEL[elFiltroEstado.value] || elFiltroEstado.value);
+    if (ffPedidos.activo()) partes.push(ffTexto(ffPedidos.rango()));
+    if (elFiltroCanal.value !== "todos") partes.push(CANAL_LABEL[elFiltroCanal.value] || elFiltroCanal.value);
+    if (elBuscar.value.trim()) partes.push("búsqueda «" + elBuscar.value.trim() + "»");
+    return partes.join(" · ");
+  }
+  document.getElementById("pedidos-excel").addEventListener("click", () => {
+    const list = pedidosVisibles();
+    if (!list.length) { mostrarMsgPedidos("err", "No hay pedidos para descargar con los filtros de ahora."); return; }
+    let blob;
+    try {
+      const hojaPedidos = {
+        nombre: "Pedidos",
+        cols: [
+          { t: "Fecha", w: 12, tipo: "fecha" }, { t: "Cliente", w: 24 }, { t: "Contacto", w: 18 }, { t: "Canal", w: 14 },
+          { t: "Productos", w: 46, ajustar: true }, { t: "Subtotal ($U)", w: 14, tipo: "dinero" }, { t: "Entrega", w: 24 }, { t: "Pago", w: 20 },
+          { t: "Estado", w: 15 }, { t: "Email", w: 26 }, { t: "Dirección", w: 28 }, { t: "Notas", w: 30, ajustar: true },
+        ],
+        filas: list.map((p) => [
+          p._dia, p.cliente_nombre, p.cliente_telefono, CANAL_LABEL[p.canal] || p.canal, (p.items || []).map(itemTexto).join("; "), num(p.subtotal),
+          p.entrega, p.pago, ESTADO_LABEL[p.estado] || p.estado, p.cliente_email, p.direccion, p.notas,
+        ]),
+      };
+      const filasItems = [];
+      list.forEach((p) => {
+        (p.items || []).forEach((it) => {
+          it = it || {};
+          const precio = it.precio === null || it.precio === undefined ? null : num(it.precio);
+          filasItems.push([p._dia, p.cliente_nombre, ESTADO_LABEL[p.estado] || p.estado, it.nombre || "Sin nombre", it.tamano, it.color, num(it.qty), precio, precio === null ? null : precio * num(it.qty), it.nota]);
+        });
+      });
+      const hojaItems = {
+        nombre: "Productos",
+        cols: [
+          { t: "Fecha", w: 12, tipo: "fecha" }, { t: "Cliente", w: 24 }, { t: "Estado", w: 15 }, { t: "Producto", w: 34 }, { t: "Tamaño", w: 14 }, { t: "Color", w: 14 },
+          { t: "Cantidad", w: 10, tipo: "numero" }, { t: "Precio c/u ($U)", w: 15, tipo: "dinero" }, { t: "Total ($U)", w: 14, tipo: "dinero" }, { t: "Observación", w: 30, ajustar: true },
+        ],
+        filas: filasItems,
+      };
+      blob = xlsxBlob([hojaPedidos, hojaItems]);
+    } catch (e) {
+      mostrarMsgPedidos("err", "No se pudo armar el Excel (" + (e && e.message ? e.message : "error") + ").");
+      return;
+    }
+    const nombre = "pedidos-storge-" + todayStr() + ".xlsx";
+    descargarBlob(blob, nombre);
+    mostrarMsgPedidos("ok", "Se descargó " + nombre + " con " + list.length + (list.length === 1 ? " pedido" : " pedidos") + " (" + descripcionFiltrosPedidos() + "). Tiene dos hojas: Pedidos y Productos.");
+  });
 
   elVentaToggle.addEventListener("click", () => {
     if (elVentaBody.hidden) abrirVenta();
@@ -1653,8 +2265,10 @@
     const fecha = document.getElementById("venta-fecha").value;
     const cliente = limpiarTexto(document.getElementById("venta-cliente").value, 80);
     const contacto = limpiarTexto(document.getElementById("venta-contacto").value, 40);
-    if (!CANALES.includes(canal) || canal === "web") return falla("Elegí el canal de la venta.", document.getElementById("venta-canal"));
-    if (!ESTADOS.includes(estado)) return falla("Elegí un estado.", document.getElementById("venta-estado"));
+    const webEditable = ventaEditOrig !== null && ventaEditOrig.canal === "web"; // un pedido de la web conserva su canal al editarlo
+    if (!CANALES.includes(canal) || (canal === "web" && !webEditable)) return falla("Elegí el canal de la venta.", document.getElementById("venta-canal"));
+    const estadoRaro = ventaEditOrig !== null && estado === ventaEditOrig.estado; // un estado desconocido que ya tenía se puede dejar igual
+    if (!ESTADOS.includes(estado) && !estadoRaro) return falla("Elegí un estado.", document.getElementById("venta-estado"));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return falla("Falta la fecha de la venta.", document.getElementById("venta-fecha"));
     if (fecha > todayStr()) return falla("La fecha de la venta no puede ser futura.", document.getElementById("venta-fecha"));
     if (!cliente) return falla("Falta el nombre del cliente.", document.getElementById("venta-cliente"));
@@ -1664,6 +2278,7 @@
     for (let i = 0; i < filas.length; i++) {
       const f = filas[i];
       const n = i + 1;
+      const orig = ventaEditId !== null && f.row._item ? f.row._item : null; // el ítem tal como estaba guardado (solo al editar)
       let nombre, tam = null, pid = null;
       if (f.sel.value === "otro") {
         nombre = limpiarTexto(f.otro.value, 80);
@@ -1677,9 +2292,11 @@
       }
       const qty = Number(f.qty.value);
       if (!Number.isInteger(qty) || qty < 1 || qty > 9999) return falla("Producto " + n + ": la cantidad tiene que ser un número entero desde 1.", f.qty);
-      if (f.precio.value === "") return falla("Producto " + n + ": falta el precio por unidad.", f.precio);
-      const precio = Number(f.precio.value);
-      if (!Number.isFinite(precio) || precio < 0 || precio > 1000000) return falla("Producto " + n + ": el precio no es válido.", f.precio);
+      // Al editar, un producto "a cotizar" (sin precio) puede seguir sin precio.
+      const sinPrecio = f.precio.value === "" && orig && (orig.precio === null || orig.precio === undefined);
+      if (f.precio.value === "" && !sinPrecio) return falla("Producto " + n + ": falta el precio por unidad.", f.precio);
+      const precio = sinPrecio ? null : Number(f.precio.value);
+      if (!sinPrecio && (!Number.isFinite(precio) || precio < 0 || precio > 1000000)) return falla("Producto " + n + ": el precio no es válido.", f.precio);
       // Costo por unidad (opcional, privado): queda guardado en el ítem y alimenta la ganancia neta del dashboard.
       let costo = null;
       if (f.costo.value !== "") {
@@ -1687,19 +2304,37 @@
         if (!Number.isFinite(costo) || costo < 0 || costo > 1000000) return falla("Producto " + n + ": el costo no es válido.", f.costo);
         costo = redondear2(costo);
       }
-      const item = { producto_id: pid, nombre: nombre, tamano: tam, qty: qty, color: null, nota: null, precio: precio, precio_lista: precio, descuento_cantidad_pct: 0, costo: costo };
-      if (f.row.dataset.cot) item.cotizacion_id = f.row.dataset.cot;
+      // ¿Sigue siendo el mismo producto que tenía el pedido? Entonces se conservan sus demás datos (color, observación, cotización…).
+      let mismo = false;
+      if (orig) {
+        mismo = f.sel.value === "otro"
+          ? (orig.producto_id === null || orig.producto_id === undefined || !ventaOpc.some((o) => o.pid === orig.producto_id)) && nombre === limpiarTexto(orig.nombre || "", 80)
+          : !!pid && pid === orig.producto_id && (tam || null) === (orig.tamano || null);
+      }
+      let item;
+      if (mismo) {
+        item = Object.assign({}, orig, { qty: qty, precio: precio, costo: costo });
+        // si cambió el precio a mano, el "precio de lista" y el descuento por cantidad que tenía ya no describen la venta
+        if (precio !== null && (orig.precio === null || orig.precio === undefined || Number(orig.precio) !== precio)) {
+          item.precio_lista = precio;
+          item.descuento_cantidad_pct = 0;
+        }
+      } else {
+        item = { producto_id: pid, nombre: nombre, tamano: tam, qty: qty, color: null, nota: null, precio: precio, precio_lista: precio, descuento_cantidad_pct: 0, costo: costo };
+        if (f.row.dataset.cot) item.cotizacion_id = f.row.dataset.cot;
+      }
       items.push(item);
     }
     if (!items.length) return falla("Agregá al menos un producto.", null);
-    const subtotal = items.reduce((s, it) => s + it.qty * it.precio, 0);
+    const subtotal = items.reduce((s, it) => s + (it.precio === null || it.precio === undefined ? 0 : it.qty * it.precio), 0);
 
+    const editando = ventaEditId !== null;
     const payload = {
       cliente_nombre: cliente,
       cliente_telefono: contacto || "—",
-      cliente_email: null,
+      cliente_email: editando ? limpiarTexto(document.getElementById("venta-email").value, 120) || null : null,
       entrega: document.getElementById("venta-entrega").value,
-      direccion: null,
+      direccion: editando ? limpiarTexto(document.getElementById("venta-direccion").value, 200) || null : null,
       pago: document.getElementById("venta-pago").value || null,
       notas: limpiarTexto(document.getElementById("venta-notas").value, 300) || null,
       items: items,
@@ -1708,44 +2343,73 @@
       canal: canal,
     };
     // Una venta de hoy se guarda con la hora actual (la pone la base); una de un día anterior, al mediodía de ese día en Uruguay.
-    if (fecha !== todayStr()) payload.created_at = fecha + "T12:00:00-03:00";
+    // Al editar, la fecha solo se toca si la cambiaste.
+    if (editando) {
+      if (fecha !== ventaEditOrig._dia) payload.created_at = fecha === todayStr() ? new Date().toISOString() : fecha + "T12:00:00-03:00";
+    } else if (fecha !== todayStr()) {
+      payload.created_at = fecha + "T12:00:00-03:00";
+    }
 
     const btn = document.getElementById("venta-guardar");
+    const textoBtn = btn.textContent;
     ventaGuardando = true;
     btn.disabled = true;
     btn.textContent = "Guardando…";
-    let error = null;
+    let error = null, sinFilas = false;
     try {
-      ({ error } = await stratoSb.from("pedidos").insert([payload]));
+      if (editando) {
+        const res = await stratoSb.from("pedidos").update(payload).eq("id", ventaEditId).select("id");
+        error = res.error;
+        if (!error && Array.isArray(res.data) && res.data.length === 0) sinFilas = true;
+      } else {
+        ({ error } = await stratoSb.from("pedidos").insert([payload]));
+      }
     } catch (err) {
       error = { message: err && err.message ? err.message : "error de conexión" };
     }
     ventaGuardando = false;
     btn.disabled = false;
-    btn.textContent = "Guardar venta";
+    btn.textContent = textoBtn;
     if (error) {
       const txt = String(error.message || "") + " " + String(error.code || "");
       if (/canal|row-level security|permission denied|42501|PGRST204/i.test(txt)) {
-        elVentaError.textContent = "Todavía falta correr supabase/migracion_dashboard.sql en Supabase (agrega el canal y el permiso para cargar ventas). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
+        elVentaError.textContent = editando
+          ? "No se pudo guardar el cambio: falta un permiso en Supabase. Corré supabase/migracion_monedas_inversion.sql (y supabase/migracion_dashboard.sql si todavía no lo corriste) y volvé a guardar: lo que cambiaste sigue acá."
+          : "Todavía falta correr supabase/migracion_dashboard.sql en Supabase (agrega el canal y el permiso para cargar ventas). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
       } else {
-        elVentaError.textContent = "No se pudo guardar la venta: " + (error.message || "error desconocido") + ". Lo que cargaste sigue acá.";
+        elVentaError.textContent = "No se pudo guardar " + (editando ? "el cambio" : "la venta") + ": " + (error.message || "error desconocido") + ". Lo que " + (editando ? "cambiaste" : "cargaste") + " sigue acá.";
       }
+      return;
+    }
+    if (sinFilas) {
+      elVentaError.textContent = "El cambio no se guardó (no se encontró el pedido o falta permiso en Supabase: corré supabase/migracion_monedas_inversion.sql). Lo que cambiaste sigue acá.";
       return;
     }
 
     const desdeCot = ventaOrigen ? ventaOrigen.nombre : null;
+    const ventaEditIdGuardado = ventaEditId;
     resetVenta();
     cerrarVenta();
     await loadPedidos();
     pedidosSucio = false;
-    elFiltroEstado.value = "todos";
-    elFiltroCanal.value = "todos";
-    elBuscar.value = "";
+    if (!editando) {
+      // la venta nueva tiene que verse: se sacan los filtros
+      elFiltroCanal.value = "todos";
+      elBuscar.value = "";
+      ffPedidos.reiniciar();
+      setGrupoPedidos("todos");
+    }
     renderPedidos();
     renderDashboard();
     actualizarAvisosPedidos();
     renderCotizaciones(); // la cotización de origen queda marcada como cargada
-    mostrarMsgPedidos("ok", "Venta guardada: " + cliente + " · " + fmtMoney(subtotal) + " · " + CANAL_LABEL[canal] + " · " + fmtDMY(fecha) + "." + (desdeCot ? " Cargada desde la cotización «" + desdeCot + "»." : ""));
+    if (editando) {
+      const sigue = pedidosVisibles().some((x) => String(x.id) === String(ventaEditIdGuardado));
+      mostrarMsgPedidos("ok", "Pedido actualizado: " + cliente + " · " + fmtMoney(subtotal) + " · " + CANAL_LABEL[canal] + " · " + fmtDMY(fecha) + "." +
+        (sigue ? "" : " Con los filtros de ahora no se ve en la lista (está en " + GRUPOS[grupoDe(estado)].label + ")."));
+    } else {
+      mostrarMsgPedidos("ok", "Venta guardada: " + cliente + " · " + fmtMoney(subtotal) + " · " + CANAL_LABEL[canal] + " · " + fmtDMY(fecha) + "." + (desdeCot ? " Cargada desde la cotización «" + desdeCot + "»." : ""));
+    }
   });
 
   /* ============ PRODUCTOS ============ */
@@ -2512,9 +3176,18 @@
   function sameColor(a, b) {
     return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
   }
+  // Precio del rollo en pesos. Si está cargado en dólares se convierte con el dólar de hoy (así sube o baja solo
+  // cuando cambiás el tipo de cambio); si todavía no hay dólar cargado, queda el último valor en pesos guardado.
+  function precioRolloUYU(f) {
+    if (f && f.moneda === "USD" && tc.USD > 0 && f.precio_original !== null && f.precio_original !== undefined && Number.isFinite(Number(f.precio_original))) {
+      return Number(f.precio_original) * tc.USD;
+    }
+    return Number(f && f.precio_rollo);
+  }
+  const filEnUSD = (f) => !!f && f.moneda === "USD" && Number.isFinite(Number(f.precio_original));
   function precioKgDe(f) {
     const peso = Number(f.peso_rollo_gr);
-    return peso > 0 ? (Number(f.precio_rollo) / peso) * 1000 : 0;
+    return peso > 0 ? (precioRolloUYU(f) / peso) * 1000 : 0;
   }
   function filamentoNombre(f) {
     return f.color + (f.marca ? " — " + f.marca : "") + (f.material ? " (" + f.material + ")" : "");
@@ -2556,7 +3229,7 @@
       .map(
         (f) =>
           "<tr><td>" + swatchHtml(f.hex) + escHtml(f.color) + "</td><td>" + escHtml(f.marca || "—") + "</td><td>" +
-          escHtml(f.material || "—") + "</td><td>" + fmtMoney(f.precio_rollo) + " <span class='muted'>/ " +
+          escHtml(f.material || "—") + "</td><td>" + precioRolloHtml(f) + " <span class='muted'>/ " +
           Number(f.peso_rollo_gr) + " gr</span></td><td>" + fmtMoney(precioKgDe(f)) + '</td><td><input type="checkbox" ' +
           (f.disponible ? "checked" : "") + " onchange=\"stratoAdminToggleFilamento('" + f.id + "', this.checked)\"></td>" +
           "<td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarFilamento('" + f.id +
@@ -2564,6 +3237,12 @@
           f.id + "')\">Eliminar</button></td></tr>"
       )
       .join("");
+  }
+
+  function precioRolloHtml(f) {
+    if (!filEnUSD(f)) return fmtMoney(f.precio_rollo);
+    return escHtml(fmtMon("USD", Number(f.precio_original))) + " <span class='muted'>" +
+      (tc.USD > 0 ? "≈ " + escHtml(fmtMoney(precioRolloUYU(f))) : "· falta cargar el dólar") + "</span>";
   }
 
   /* Cada vez que cambia la lista de filamentos hay tres lugares que dependen de ella. */
@@ -2574,18 +3253,47 @@
     renderResultados();
   }
 
+  function filMonedaForm() {
+    return document.getElementById("fil-moneda").value === "USD" ? "USD" : "UYU";
+  }
+  // Precio del rollo del formulario, en pesos (null si está en dólares y todavía no hay dólar cargado).
+  function filPrecioUYUForm() {
+    const v = numVal("fil-precio-rollo");
+    if (filMonedaForm() === "USD") return tc.USD > 0 ? v * tc.USD : null;
+    return v;
+  }
   function updateFilKgPreview() {
-    const precio = numVal("fil-precio-rollo");
     const peso = numVal("fil-peso-rollo");
-    document.getElementById("fil-kg-preview").textContent = peso > 0 ? fmtMoney((precio / peso) * 1000) + " / kg" : "—";
+    const usd = filMonedaForm() === "USD";
+    document.getElementById("fil-precio-lbl").textContent = "Precio del rollo (" + (usd ? "US$" : "$U") + ")";
+    const pUYU = filPrecioUYUForm();
+    document.getElementById("fil-kg-preview").textContent = peso > 0 && pUYU !== null ? fmtMoney((pUYU / peso) * 1000) + " / kg" : "—";
+    const eq = document.getElementById("fil-eq");
+    if (!usd) eq.textContent = "";
+    else if (!(tc.USD > 0)) eq.textContent = "Para pasar los dólares a pesos, primero cargá el valor del dólar en «Tipo de cambio» (arriba).";
+    else eq.textContent = "Con el dólar a " + fmtMoney(tc.USD) + ", el rollo equivale a " + fmtMoney(numVal("fil-precio-rollo") * tc.USD) + ". Se actualiza solo si cambiás el dólar.";
   }
   document.getElementById("fil-precio-rollo").addEventListener("input", updateFilKgPreview);
   document.getElementById("fil-peso-rollo").addEventListener("input", updateFilKgPreview);
+  document.getElementById("fil-moneda").addEventListener("change", updateFilKgPreview);
+
+  // Cambió el tipo de cambio: se recalculan los filamentos en dólares y todo lo que depende de ellos.
+  function tcCambio() {
+    calcFilRows.forEach((r) => {
+      const f = r.filamento_id ? filamentosCache.find((x) => x.id === r.filamento_id) : null;
+      if (f && filEnUSD(f)) r.precio_kg = Math.round(precioKgDe(f) * 100) / 100;
+    });
+    refreshFilamentoDependents();
+    updateFilKgPreview();
+    if (gastoEditId === null) formMonedaGasto(true);
+    else actualizarEquivGasto();
+  }
 
   function resetFilamentoForm() {
     editingFilamentoId = null;
     document.getElementById("form-filamento").reset();
     document.getElementById("fil-material").value = "PLA";
+    document.getElementById("fil-moneda").value = "UYU";
     document.getElementById("fil-peso-rollo").value = 1000;
     document.getElementById("fil-hex").value = "#333333";
     document.getElementById("fil-hex-activo").checked = true;
@@ -2605,7 +3313,8 @@
     document.getElementById("fil-color").value = f.color;
     document.getElementById("fil-marca").value = f.marca || "";
     document.getElementById("fil-material").value = f.material || "";
-    document.getElementById("fil-precio-rollo").value = f.precio_rollo;
+    document.getElementById("fil-moneda").value = filEnUSD(f) ? "USD" : "UYU";
+    document.getElementById("fil-precio-rollo").value = filEnUSD(f) ? f.precio_original : f.precio_rollo;
     document.getElementById("fil-peso-rollo").value = f.peso_rollo_gr;
     document.getElementById("fil-hex-activo").checked = !!f.hex;
     document.getElementById("fil-hex").value = f.hex && /^#[0-9a-fA-F]{6}$/.test(f.hex) ? f.hex : "#333333";
@@ -2653,6 +3362,19 @@
     };
     if (!payload.color) { errEl.textContent = "Falta el color."; return; }
     if (!(payload.peso_rollo_gr > 0)) { errEl.textContent = "El peso del rollo tiene que ser mayor a 0."; return; }
+    // Moneda del precio: en dólares se guarda el precio en US$ y, además, su equivalente en pesos de hoy.
+    const previoFil = editingFilamentoId ? filamentosCache.find((x) => x.id === editingFilamentoId) : null;
+    if (filMonedaForm() === "USD") {
+      if (!(tc.USD > 0)) { errEl.textContent = "Para guardar un precio en dólares, primero cargá el valor del dólar en «Tipo de cambio» (arriba)."; return; }
+      const usd = payload.precio_rollo;
+      if (!(usd >= 0) || usd > 1e9) { errEl.textContent = "El precio del rollo no es válido."; return; }
+      payload.precio_original = redondear2(usd);
+      payload.precio_rollo = redondear2(usd * tc.USD);
+      payload.moneda = "USD";
+    } else if (previoFil && filEnUSD(previoFil)) {
+      payload.moneda = "UYU"; // pasa de dólares a pesos
+      payload.precio_original = null;
+    }
     if (!requireSb()) return;
 
     let error;
@@ -2661,7 +3383,12 @@
     } else {
       ({ error } = await stratoSb.from("filamentos").insert([payload]));
     }
-    if (error) { errEl.textContent = error.message; return; }
+    if (error) {
+      errEl.textContent = /moneda|precio_original|PGRST204/i.test(String(error.message || "") + " " + String(error.code || ""))
+        ? "Todavía falta correr supabase/migracion_monedas_inversion.sql en Supabase (agrega el precio en dólares). Corrélo y volvé a guardar: lo que cargaste sigue acá."
+        : error.message;
+      return;
+    }
 
     await loadFilamentos();
     resetFilamentoForm();
@@ -2956,71 +3683,303 @@
   });
 
   /* ============ GASTOS ============ */
-  document.getElementById("gastos-filtrar").addEventListener("click", async () => {
-    await loadGastos(document.getElementById("gastos-desde").value, document.getElementById("gastos-hasta").value);
-    renderGastos();
+  /* La lista sale de `gastosAll` (todos los gastos, los mismos que usa el dashboard) filtrada por fecha acá mismo.
+     En pesos, `monto` es lo que pagaste. En dólares o reales, `monto` es el equivalente en pesos (lo que usa todo el
+     dashboard) y se guardan además `monto_original` y `tipo_cambio`, para poder editarlo después. */
+  const ffGastos = crearFiltroFecha(document.getElementById("gastos-fecha"), "gastos", () => renderGastos());
+  const elGastosMsg = document.getElementById("gastos-msg");
+  const elGastoMoneda = document.getElementById("gasto-moneda");
+  const elGastoMonto = document.getElementById("gasto-monto");
+  const elGastoTc = document.getElementById("gasto-tc");
+  const elGastoCat = document.getElementById("gasto-categoria");
+  let gastoGuardando = false;
+  let gastosMsgTimer = null;
+  let gastosMsgTipo = "";
+
+  function mostrarMsgGastos(tipo, texto, accion) {
+    elGastosMsg.className = "inline-msg " + tipo;
+    elGastosMsg.textContent = texto;
+    if (accion) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn-soft";
+      b.style.marginLeft = "10px";
+      b.dataset.act = accion;
+      b.textContent = "Reintentar";
+      elGastosMsg.appendChild(b);
+    }
+    elGastosMsg.hidden = false;
+    gastosMsgTipo = tipo;
+    clearTimeout(gastosMsgTimer);
+    if (tipo === "ok") gastosMsgTimer = setTimeout(ocultarMsgGastos, 8000);
+  }
+  function ocultarMsgGastos() {
+    clearTimeout(gastosMsgTimer);
+    elGastosMsg.hidden = true;
+    elGastosMsg.textContent = "";
+    gastosMsgTipo = "";
+  }
+  elGastosMsg.addEventListener("click", (e) => {
+    if (e.target.closest("[data-act='reintentar']")) refreshDatos({ manual: true });
   });
+
+  const gastosVisibles = () => gastosAll.filter((g) => ffGastos.dentro(g._f));
+
+  function montoGastoHtml(g) {
+    const m = monedaDe(g.moneda);
+    const orig = Number(g.monto_original), tcg = Number(g.tipo_cambio);
+    let sub = "";
+    if (m !== "UYU" && Number.isFinite(orig) && orig > 0) {
+      sub = '<span class="orig-mon">' + escHtml(fmtMon(m, orig)) + (Number.isFinite(tcg) && tcg > 0 ? " × " + escHtml(fmtNum(tcg, 4)) : "") + "</span>";
+    }
+    return escHtml(fmtMoney(num(g.monto))) + sub;
+  }
 
   function renderGastos() {
     const tbody = document.getElementById("gastos-tbody");
     const tfoot = document.getElementById("gastos-tfoot");
-    document.getElementById("gastos-empty").style.display = gastosCache.length ? "none" : "block";
+    if (gastosEstado.intento && !gastosEstado.ok) {
+      mostrarMsgGastos("err", "No se pudieron cargar los gastos (" + gastosEstado.error + "). Lo que ves puede estar desactualizado.", "reintentar");
+    } else if (gastosMsgTipo === "err") {
+      ocultarMsgGastos();
+    }
+    const lista = gastosVisibles();
+    const vacio = document.getElementById("gastos-empty");
+    vacio.style.display = lista.length ? "none" : "block";
+    vacio.textContent = gastosAll.length ? "No hay gastos en este período." : "Todavía no registraste gastos.";
+    document.getElementById("gastos-count").textContent = gastosEstado.hayDatos
+      ? "Mostrando " + lista.length + " de " + gastosAll.length + (gastosAll.length === 1 ? " gasto" : " gastos") + (gastosEstado.truncado ? " · hay más gastos viejos que no se cargaron" : "")
+      : "";
 
-    tbody.innerHTML = gastosCache
-      .map(
-        (g) =>
-          "<tr><td>" +
-          g.fecha +
-          "</td><td>" +
-          escHtml(g.concepto) +
-          "</td><td>" +
-          escHtml(g.categoria || "—") +
-          "</td><td>" +
-          fmtMoney(g.monto) +
-          "</td><td>" +
-          escHtml(g.nota || "—") +
-          "</td><td><button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarGasto('" +
-          g.id +
-          "')\">Eliminar</button></td></tr>"
-      )
+    tbody.innerHTML = lista
+      .map((g) => {
+        const id = escAttr(g.id);
+        const inv = esInversion(g);
+        return (
+          '<tr><td data-label="Fecha">' + (g._f ? fmtDMY(g._f) : "—") + '</td><td data-label="Concepto">' + escHtml(g.concepto) +
+          '</td><td data-label="Categoría">' + (inv ? '<span class="tag-inv">Inversión inicial</span>' : escHtml(g.categoria || "—")) +
+          '</td><td class="m" data-label="Monto">' + montoGastoHtml(g) + '</td><td data-label="Nota">' + escHtml(g.nota || "—") +
+          '</td><td class="act"><div class="row-acts"><button type="button" class="btn-secondary btn-small" data-act="editar-gasto" data-id="' + id +
+          '" aria-label="Editar el gasto ' + escAttr(g.concepto) + '">Editar</button><button type="button" class="btn-danger btn-small" data-act="eliminar-gasto" data-id="' + id +
+          '" aria-label="Eliminar el gasto ' + escAttr(g.concepto) + '">Eliminar</button></div></td></tr>'
+        );
+      })
       .join("");
 
-    const total = gastosCache.reduce((s, g) => s + Number(g.monto || 0), 0);
-    tfoot.innerHTML = '<tr><td colspan="3">Total</td><td>' + fmtMoney(total) + "</td><td colspan='2'></td></tr>";
+    const normales = lista.filter((g) => !esInversion(g));
+    const invers = lista.filter(esInversion);
+    const total = suma(normales, (g) => g.monto);
+    let pie = '<tr><td colspan="3"><span>Total de gastos' + (normales.length ? " (" + normales.length + ")" : "") + '</span></td><td class="m">' + escHtml(fmtMoney(total)) + "</td><td colspan='2'></td></tr>";
+    if (invers.length) {
+      pie += '<tr><td colspan="3"><span>Inversión inicial (' + invers.length + ') <span class="muted" style="font-weight:400">· aparte, no cuenta en caja ni ganancia</span></span></td><td class="m">' +
+        escHtml(fmtMoney(suma(invers, (g) => g.monto))) + "</td><td colspan='2'></td></tr>";
+    }
+    tfoot.innerHTML = lista.length ? pie : "";
   }
 
-  window.stratoAdminEliminarGasto = async function (id) {
-    if (!confirm("¿Eliminar este gasto?")) return;
-    const { error } = await stratoSb.from("gastos").delete().eq("id", id);
-    if (error) { alert("No se pudo eliminar: " + error.message); return; }
-    gastosCache = gastosCache.filter((g) => g.id !== id);
-    gastosAll = gastosAll.filter((g) => g.id !== id);
+  /* ---- Formulario ---- */
+  function actualizarEquivGasto() {
+    const m = monedaDe(elGastoMoneda.value);
+    const eq = document.getElementById("gasto-equiv");
+    if (m === "UYU") { eq.hidden = true; eq.textContent = ""; return; }
+    const v = Number(elGastoMonto.value), r = Number(elGastoTc.value);
+    if (elGastoMonto.value !== "" && elGastoTc.value !== "" && Number.isFinite(v) && Number.isFinite(r) && v > 0 && r > 0) {
+      eq.textContent = fmtMon(m, v) + " × " + fmtNum(r, 4) + " = " + fmtMoney(redondear2(v * r)) + " (es lo que cuenta en caja y ganancia)";
+      eq.hidden = false;
+    } else {
+      eq.hidden = true;
+      eq.textContent = "";
+    }
+  }
+  // Cambia la moneda: rótulos, tipo de cambio sugerido (el guardado) y el equivalente en pesos.
+  function formMonedaGasto(cargarTc) {
+    const m = monedaDe(elGastoMoneda.value);
+    const ext = m !== "UYU";
+    document.getElementById("gasto-monto-lbl").textContent = "Monto (" + MONEDAS[m].sim + ")";
+    document.getElementById("gasto-tc-wrap").hidden = !ext;
+    elGastoTc.required = ext;
+    if (ext) {
+      document.getElementById("gasto-tc-lbl").textContent = "Tipo de cambio ($U por " + MONEDAS[m].sim + " 1)";
+      if (cargarTc) elGastoTc.value = tc[m] ? String(tc[m]) : "";
+    } else if (cargarTc) {
+      elGastoTc.value = "";
+    }
+    actualizarEquivGasto();
+  }
+  function hintCategoriaGasto() {
+    document.getElementById("gasto-cat-hint").hidden = normCat(elGastoCat.value) !== CAT_INVERSION;
+  }
+  elGastoMoneda.addEventListener("change", () => formMonedaGasto(true));
+  elGastoMonto.addEventListener("input", actualizarEquivGasto);
+  elGastoTc.addEventListener("input", actualizarEquivGasto);
+  elGastoCat.addEventListener("change", hintCategoriaGasto);
+
+  function resetGastoForm() {
+    gastoEditId = null;
+    document.getElementById("form-gasto").reset();
+    elGastoCat.querySelectorAll("option[data-temp]").forEach((o) => o.remove());
+    document.getElementById("gasto-fecha").value = todayStr();
+    document.getElementById("gasto-form-title").textContent = "Registrar gasto";
+    document.getElementById("gasto-submit").textContent = "Registrar gasto";
+    document.getElementById("gasto-cancelar").hidden = true;
+    document.getElementById("gasto-edit-banner").hidden = true;
+    document.getElementById("gasto-error").textContent = "";
+    formMonedaGasto(true);
+    hintCategoriaGasto();
+  }
+  document.getElementById("gasto-cancelar").addEventListener("click", resetGastoForm);
+
+  function editarGasto(id) {
+    const g = gastosAll.find((x) => String(x.id) === String(id));
+    if (!g) return;
+    resetGastoForm();
+    gastoEditId = g.id;
+    const m = monedaDe(g.moneda);
+    document.getElementById("gasto-concepto").value = g.concepto || "";
+    document.getElementById("gasto-fecha").value = g._f || todayStr();
+    elGastoMoneda.value = m;
+    const orig = Number(g.monto_original), tcg = Number(g.tipo_cambio);
+    if (m !== "UYU" && Number.isFinite(orig) && orig > 0) {
+      elGastoMonto.value = String(orig);
+      elGastoTc.value = Number.isFinite(tcg) && tcg > 0 ? String(tcg) : "";
+    } else {
+      // gasto en pesos (o en otra moneda sin datos originales): se edita el monto en pesos
+      elGastoMoneda.value = "UYU";
+      elGastoMonto.value = String(num(g.monto));
+      elGastoTc.value = "";
+    }
+    // categoría: se busca sin importar mayúsculas ni tildes; si no está en la lista, se agrega tal cual
+    const buscada = normCat(g.categoria);
+    let opt = Array.from(elGastoCat.options).find((o) => normCat(o.value) === buscada);
+    if (!opt) {
+      opt = document.createElement("option");
+      opt.value = g.categoria || "Otro";
+      opt.textContent = g.categoria || "Otro";
+      opt.dataset.temp = "1";
+      elGastoCat.appendChild(opt);
+    }
+    elGastoCat.value = opt.value;
+    document.getElementById("gasto-nota").value = g.nota || "";
+    formMonedaGasto(false);
+    hintCategoriaGasto();
+    document.getElementById("gasto-form-title").textContent = "Editar gasto";
+    document.getElementById("gasto-submit").textContent = "Guardar cambios";
+    document.getElementById("gasto-cancelar").hidden = false;
+    const ban = document.getElementById("gasto-edit-banner");
+    ban.textContent = "Estás editando el gasto «" + (g.concepto || "") + "» del " + (g._f ? fmtDMY(g._f) : "—") + ". Los cambios reemplazan lo guardado.";
+    ban.hidden = false;
+    document.getElementById("gasto-concepto").focus({ preventScroll: true });
+    document.getElementById("form-gasto").scrollIntoView({ behavior: "auto", block: "start" });
+  }
+
+  async function eliminarGasto(id) {
+    const g = gastosAll.find((x) => String(x.id) === String(id));
+    if (!confirm("¿Eliminar este gasto" + (g ? " («" + g.concepto + "», " + fmtMoney(num(g.monto)) + ")" : "") + "? No se puede deshacer.")) return;
+    let res;
+    try {
+      res = await stratoSb.from("gastos").delete().eq("id", id).select("id");
+    } catch (e) {
+      mostrarMsgGastos("err", "No se pudo eliminar el gasto (" + (e && e.message ? e.message : "error de conexión") + ").");
+      return;
+    }
+    if (res.error) { mostrarMsgGastos("err", "No se pudo eliminar el gasto (" + res.error.message + ")."); return; }
+    if (Array.isArray(res.data) && res.data.length === 0) { mostrarMsgGastos("err", "El gasto no se eliminó (no se encontró o falta permiso)."); return; }
+    gastosAll = gastosAll.filter((x) => String(x.id) !== String(id));
+    if (gastoEditId !== null && String(gastoEditId) === String(id)) resetGastoForm();
     renderGastos();
     renderDashboard();
-  };
+    mostrarMsgGastos("ok", "Gasto eliminado" + (g ? ": " + g.concepto + " · " + fmtMoney(num(g.monto)) : "") + ".");
+  }
+  window.stratoAdminEliminarGasto = eliminarGasto; // compatibilidad con la versión anterior
+
+  document.getElementById("gastos-tbody").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-act]");
+    if (!b) return;
+    if (b.dataset.act === "editar-gasto") editarGasto(b.dataset.id);
+    else if (b.dataset.act === "eliminar-gasto") eliminarGasto(b.dataset.id);
+  });
 
   document.getElementById("form-gasto").addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (gastoGuardando) return;
     const errEl = document.getElementById("gasto-error");
     errEl.textContent = "";
+    const falla = (texto, campo) => { errEl.textContent = texto; if (campo) campo.focus(); };
+
+    const concepto = limpiarTexto(document.getElementById("gasto-concepto").value, 120);
+    const moneda = monedaDe(elGastoMoneda.value);
+    const ingresado = Number(elGastoMonto.value);
+    const fecha = document.getElementById("gasto-fecha").value || todayStr();
+    if (!concepto) return falla("Falta el concepto.", document.getElementById("gasto-concepto"));
+    if (elGastoMonto.value === "" || !Number.isFinite(ingresado) || ingresado <= 0 || ingresado > 1e9) return falla("Falta el monto (tiene que ser mayor a 0).", elGastoMonto);
+    if (!FF_RE.test(fecha)) return falla("Falta la fecha.", document.getElementById("gasto-fecha"));
+
+    const previo = gastoEditId !== null ? gastosAll.find((x) => String(x.id) === String(gastoEditId)) : null;
     const payload = {
-      concepto: document.getElementById("gasto-concepto").value.trim(),
-      monto: Number(document.getElementById("gasto-monto").value || 0),
-      categoria: document.getElementById("gasto-categoria").value,
-      fecha: document.getElementById("gasto-fecha").value || todayStr(),
-      nota: document.getElementById("gasto-nota").value.trim(),
+      concepto: concepto,
+      categoria: elGastoCat.value,
+      fecha: fecha,
+      nota: limpiarTexto(document.getElementById("gasto-nota").value, 300),
     };
-    if (!payload.concepto || !payload.monto) { errEl.textContent = "Faltan datos."; return; }
+    if (moneda === "UYU") {
+      payload.monto = redondear2(ingresado);
+      // si el gasto estaba en otra moneda y ahora pasa a pesos, se limpian los datos de la otra moneda
+      if (previo && monedaDe(previo.moneda) !== "UYU") { payload.moneda = "UYU"; payload.monto_original = null; payload.tipo_cambio = null; }
+    } else {
+      const r = Number(elGastoTc.value);
+      if (elGastoTc.value === "" || !Number.isFinite(r) || r <= 0 || r > 100000) return falla("Falta el tipo de cambio (cuántos $U vale " + MONEDAS[moneda].sim + " 1).", elGastoTc);
+      payload.monto = redondear2(ingresado * r);
+      if (!(payload.monto > 0)) return falla("Con ese tipo de cambio el monto en pesos da 0. Revisá los números.", elGastoMonto);
+      payload.moneda = moneda;
+      payload.monto_original = redondear2(ingresado);
+      payload.tipo_cambio = r;
+    }
+    if (payload.monto > 1e9) return falla("El monto es demasiado grande.", elGastoMonto);
 
-    const { error } = await stratoSb.from("gastos").insert([payload]);
-    if (error) { errEl.textContent = error.message; return; }
+    const btn = document.getElementById("gasto-submit");
+    const textoBtn = btn.textContent;
+    gastoGuardando = true;
+    btn.disabled = true;
+    btn.textContent = "Guardando…";
+    let error = null, sinFilas = false;
+    try {
+      if (gastoEditId !== null) {
+        const res = await stratoSb.from("gastos").update(payload).eq("id", gastoEditId).select("id");
+        error = res.error;
+        if (!error && Array.isArray(res.data) && res.data.length === 0) sinFilas = true;
+      } else {
+        ({ error } = await stratoSb.from("gastos").insert([payload]));
+      }
+    } catch (err) {
+      error = { message: err && err.message ? err.message : "error de conexión" };
+    }
+    gastoGuardando = false;
+    btn.disabled = false;
+    btn.textContent = textoBtn;
+    if (error) {
+      const txt = String(error.message || "") + " " + String(error.code || "");
+      if (/moneda|monto_original|tipo_cambio|PGRST204/i.test(txt)) {
+        errEl.textContent = "Todavía falta correr supabase/migracion_monedas_inversion.sql en Supabase (agrega las monedas). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
+      } else {
+        errEl.textContent = "No se pudo guardar el gasto: " + (error.message || "error desconocido") + ". Lo que cargaste sigue acá.";
+      }
+      return;
+    }
+    if (sinFilas) { errEl.textContent = "El cambio no se guardó (no se encontró el gasto o falta permiso)."; return; }
 
-    document.getElementById("form-gasto").reset();
-    document.getElementById("gasto-fecha").value = todayStr();
-    await loadGastos(document.getElementById("gastos-desde").value, document.getElementById("gastos-hasta").value);
-    renderGastos();
+    const editando = gastoEditId !== null;
+    resetGastoForm();
     await loadGastosTodos().catch(() => false);
+    renderGastos();
     renderDashboard();
+    const fuera = !ffGastos.dentro(fecha);
+    mostrarMsgGastos(
+      "ok",
+      (editando ? "Gasto actualizado: " : "Gasto guardado: ") + concepto + " · " + fmtMoney(payload.monto) +
+        (moneda !== "UYU" ? " (" + fmtMon(moneda, payload.monto_original) + ")" : "") +
+        (normCat(payload.categoria) === CAT_INVERSION ? " · Inversión inicial: no cuenta en caja ni ganancia" : "") + "." +
+        (fuera ? " Queda fuera del período elegido, por eso no se ve en la lista." : "")
+    );
   });
 
   /* ============ CALCULADORA DE COSTOS ============ */
@@ -3374,16 +4333,24 @@
     }
   });
 
+  const ffCot = crearFiltroFecha(document.getElementById("cotizaciones-fecha"), "cotizaciones", () => renderCotizaciones());
+
   function renderCotizaciones() {
     const tbody = document.getElementById("cotizaciones-tbody");
-    document.getElementById("cotizaciones-empty").style.display = cotizacionesCache.length ? "none" : "block";
+    const lista = cotizacionesCache.filter((c) => ffCot.dentro(diaUY(c.created_at)));
+    const vacio = document.getElementById("cotizaciones-empty");
+    vacio.style.display = lista.length ? "none" : "block";
+    vacio.textContent = cotizacionesCache.length ? "No hay cotizaciones en este período." : "Todavía no guardaste ninguna cotización.";
+    document.getElementById("cotizaciones-count").textContent = cotizacionesCache.length
+      ? "Mostrando " + lista.length + " de " + cotizacionesCache.length + (cotizacionesCache.length === 1 ? " cotización" : " cotizaciones")
+      : "";
     // Cotizaciones que ya se cargaron como pedido (un pedido cancelado no cuenta)
     const cargadas = new Map();
     pedidosCache.forEach((p) => {
       if (p.estado === "cancelado") return;
       (p.items || []).forEach((it) => { if (it && it.cotizacion_id && !cargadas.has(it.cotizacion_id)) cargadas.set(it.cotizacion_id, p); });
     });
-    tbody.innerHTML = cotizacionesCache
+    tbody.innerHTML = lista
       .map((c) => {
         // Costo total (base + accesorio) y ganancia sobre el total: se calculan igual para las cotizaciones viejas y las nuevas.
         const ct = costoDeCotizacion(c);
