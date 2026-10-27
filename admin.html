@@ -421,6 +421,21 @@
   .edit-banner { font-size: 13px; padding: 10px 12px; border-radius: 3px; margin-bottom: 14px; background: #F3EEFB; border: 1px solid #D6C9F0; color: #3F2F6E; }
   tfoot td { font-weight: 600; }
   .fil-eq { font-size: 12px; color: var(--text-muted); margin: -10px 0 6px; }
+  /* Pago pendiente y plazo de entrega en Pedidos */
+  .sub-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .pago-chip { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 3px 10px; border: 1px solid transparent; white-space: nowrap; line-height: 1.3; }
+  .pago-chip.ok { background: #EAF3EC; color: #25573A; border-color: rgba(47,107,67,0.3); }
+  .pago-chip.pend { background: #FBF1DC; color: #7A5200; border-color: rgba(122,82,0,0.35); }
+  @media (hover: hover) { .pago-chip:hover { border-color: var(--accent); } }
+  .pago-chip:active { transform: scale(0.97); }
+  .plazo-chip { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 9px; background: var(--bg-section); color: var(--text-muted); white-space: nowrap; line-height: 1.3; }
+  .field-hint.warn { color: #7A5200; font-weight: 600; }
+  .plazo-chip.vencido { background: #F6DDD9; color: #8A2A1F; }
+  .plazo-chip.hoy, .plazo-chip.pronto { background: #FBF1DC; color: #7A5200; }
+  .plazo-aviso { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; padding: 10px 12px; border-radius: 3px; margin-bottom: 14px; background: #FBF1DC; border: 1px solid rgba(122,82,0,0.35); color: #5C3D00; }
+  .plazo-aviso.late { background: #FBEEEC; border-color: rgba(179,57,43,0.4); color: #7E2A20; }
+  .plazo-aviso[hidden] { display: none; }
+  .plazo-aviso .btn-soft { margin-left: auto; }
   @media (max-width: 700px) {
     .seg.seg-card { margin-left: -24px; margin-right: -24px; padding-left: 24px; padding-right: 24px; }
     .row-acts { justify-content: flex-end; flex-wrap: wrap; }
@@ -429,6 +444,7 @@
 
   /* Pantallas táctiles: objetivos de al menos 44 px */
   @media (pointer: coarse) {
+    .pago-chip { min-height: 44px; padding-left: 14px; padding-right: 14px; }
     .btn, .btn-small, .btn-soft, .btn-secondary, .att, .seg button, nav.tabs button, select, .estado-select,
     input[type="text"], input[type="date"], input[type="number"], input[type="email"], input[type="password"], input[type="search"] { min-height: 44px; }
     .row-del { min-width: 44px; min-height: 44px; }
@@ -623,6 +639,22 @@
                 </select>
               </div>
             </div>
+            <div class="grid2">
+              <div>
+                <label for="venta-plazo">Plazo de entrega (opcional)</label>
+                <input type="date" id="venta-plazo">
+                <p class="field-hint">La fecha que le prometiste al cliente. Se ve en la lista de pedidos y avisa cuando se acerca o se pasa.</p>
+                <p class="field-hint warn" id="venta-plazo-aviso" hidden>El estado está en «Entregado», así que este plazo no va a generar avisos. Si todavía no lo entregaste, cambiá el estado.</p>
+              </div>
+              <div>
+                <span class="venta-lbl" id="venta-cobro-lbl">Cobro</span>
+                <div class="inline-check" role="group" aria-labelledby="venta-cobro-lbl">
+                  <input type="checkbox" id="venta-pagado" checked>
+                  <label for="venta-pagado">Ya está pagado</label>
+                </div>
+                <p class="field-hint" id="venta-pagado-hint">Sin tildar queda como pago pendiente: no suma al saldo de caja hasta que lo marques como pagado.</p>
+              </div>
+            </div>
             <div class="grid2" id="venta-edit-extra" hidden>
               <div>
                 <label for="venta-email">Email (opcional)</label>
@@ -655,6 +687,8 @@
           <button type="button" class="btn-soft" id="pedidos-excel" title="Descarga en Excel los pedidos que se ven ahora, con los filtros aplicados">⬇ Descargar Excel</button>
         </div>
         <div class="inline-msg" id="pedidos-msg" role="status" hidden></div>
+        <div class="inline-msg err" id="pedidos-sql" role="status" hidden>Para usar el pago pendiente y el plazo de entrega falta correr <strong>supabase/migracion_pago_plazo_valorhora.sql</strong> en Supabase. Mientras tanto todos los pedidos cuentan como pagados.</div>
+        <div class="plazo-aviso" id="pedidos-plazos" role="status" hidden></div>
         <div class="seg seg-card" id="pedidos-grupos" role="group" aria-label="Grupo de pedidos">
           <button type="button" data-grupo="activos" aria-pressed="true">Activos <span class="seg-n" data-n="activos"></span></button>
           <button type="button" data-grupo="finalizados" aria-pressed="false">Finalizados <span class="seg-n" data-n="finalizados"></span></button>
@@ -672,6 +706,18 @@
             <option value="listo">Listo</option>
             <option value="entregado">Entregado</option>
             <option value="cancelado">Cancelado</option>
+          </select>
+          <select id="pedidos-filtro-pago" aria-label="Filtrar por pago" style="width:auto;margin-bottom:0;">
+            <option value="todos">Pagados y pendientes</option>
+            <option value="pendientes">Solo pago pendiente</option>
+            <option value="pagados">Solo pagados</option>
+          </select>
+          <select id="pedidos-filtro-plazo" aria-label="Filtrar por plazo de entrega" style="width:auto;margin-bottom:0;">
+            <option value="todos">Todos los plazos</option>
+            <option value="pronto">Vencidos y próximos 3 días</option>
+            <option value="vencidos">Plazo vencido</option>
+            <option value="con">Con plazo</option>
+            <option value="sin">Sin plazo</option>
           </select>
           <select id="pedidos-filtro-canal" aria-label="Filtrar por canal" style="width:auto;margin-bottom:0;">
             <option value="todos">Todos los canales</option>
@@ -1114,6 +1160,13 @@
                 <input type="number" id="maq-costo-reposicion" min="0" step="1" value="0" required>
               </div>
             </div>
+            <div class="grid3">
+              <div>
+                <label for="maq-valor-hora">Valor hora en uso ($U / h)</label>
+                <input type="number" id="maq-valor-hora" min="0" step="1" value="90" required>
+              </div>
+            </div>
+            <p class="field-hint">Lo que vale cada hora de máquina imprimiendo. La calculadora lo multiplica por las horas de cada pieza.</p>
             <div class="grid2" style="margin-top:8px;">
               <button type="submit" class="btn" id="maq-submit-btn">Guardar máquina</button>
               <button type="button" class="btn-secondary" id="maq-cancel-btn" style="display:none">Cancelar edición</button>
@@ -1127,7 +1180,7 @@
         <h2>Mis máquinas</h2>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Nombre</th><th>Potencia</th><th>Vida útil</th><th>Costo reposición</th><th></th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Potencia</th><th>Vida útil</th><th>Costo reposición</th><th>Valor hora</th><th></th></tr></thead>
             <tbody id="maquinas-tbody"></tbody>
           </table>
           <p class="empty-msg" id="maquinas-empty" style="display:none">Todavía no cargaste ninguna máquina.</p>
@@ -1155,10 +1208,14 @@
           </div>
         </div>
 
-        <div class="grid2">
+        <div class="grid3">
           <div>
             <label for="calc-costo-electricidad">Costo de electricidad ($U / kWh)</label>
             <input type="number" id="calc-costo-electricidad" min="0" step="0.1" value="10">
+          </div>
+          <div>
+            <label for="calc-valor-hora">Valor hora de máquina en uso ($U / h)</label>
+            <input type="number" id="calc-valor-hora" min="0" step="1" value="90">
           </div>
           <div>
             <label>Peso total de la pieza (suma de los filamentos)</label>

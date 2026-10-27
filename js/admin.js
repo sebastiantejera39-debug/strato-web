@@ -357,9 +357,36 @@
   // Datos derivados que se calculan una sola vez al cargar: el día en Uruguay y un canal siempre válido.
   function prepPedido(p) {
     p._dia = diaUY(p.created_at);
+    p._plazo = /^\d{4}-\d{2}-\d{2}/.test(String(p.plazo_entrega || "")) ? String(p.plazo_entrega).slice(0, 10) : ""; // plazo de entrega prometido (día)
     p.canal = CANALES.includes(p.canal) ? p.canal : p.canal ? "otro" : "web";
     if (!Array.isArray(p.items)) p.items = [];
     return p;
+  }
+
+  /* Pago y plazo de entrega de cada pedido (columnas `pagado` y `plazo_entrega`: supabase/migracion_pago_plazo_valorhora.sql).
+     Un pedido cuenta como cobrado salvo que diga expresamente lo contrario: si la columna todavía no existe en la base,
+     todo cuenta como pagado (igual que antes de esta mejora). */
+  const esPagado = (p) => !p || p.pagado !== false;
+  // null = todavía no se sabe (no hay pedidos para mirar); true / false = las columnas nuevas existen / no existen en la base
+  let colsPedidoNuevas = null;
+  const SQL_PAGO = "supabase/migracion_pago_plazo_valorhora.sql";
+  const VALOR_HORA_DEFECTO = 90; // $U por hora de máquina en uso, si la máquina todavía no tiene uno propio
+  const PLAZO_PRONTO = 3; // "vence pronto": hoy y los 3 días siguientes
+  const PLAZO_FILTROS = ["todos", "pronto", "vencidos", "con", "sin"];
+  // Estado del plazo de un pedido respecto de hoy: vencido / hoy / pronto / ok, o cerrado si ya se entregó o se canceló.
+  function plazoEstado(p, hoy) {
+    if (!p || !p._plazo) return null;
+    const d = diffDays(hoy, p._plazo);
+    const fecha = p._plazo.slice(0, 4) === hoy.slice(0, 4) ? fmtDM(p._plazo) : fmtDMY(p._plazo);
+    const dias = (n) => n + (n === 1 ? " día" : " días");
+    let tipo, texto, largo;
+    if (p.estado === "entregado" || p.estado === "cancelado") { tipo = "cerrado"; texto = "Plazo " + fecha; largo = fmtDMY(p._plazo); }
+    else if (d < 0) { tipo = "vencido"; texto = "Plazo " + fecha + " · atrasado " + dias(-d); largo = fmtDMY(p._plazo) + " (atrasado " + dias(-d) + ")"; }
+    else if (d === 0) { tipo = "hoy"; texto = "Plazo hoy"; largo = fmtDMY(p._plazo) + " (vence hoy)"; }
+    else if (d === 1) { tipo = "pronto"; texto = "Plazo mañana"; largo = fmtDMY(p._plazo) + " (vence mañana)"; }
+    else if (d <= PLAZO_PRONTO) { tipo = "pronto"; texto = "Plazo " + fecha + " · en " + d + " días"; largo = fmtDMY(p._plazo) + " (vence en " + d + " días)"; }
+    else { tipo = "ok"; texto = "Plazo " + fecha; largo = fmtDMY(p._plazo) + " (en " + d + " días)"; }
+    return { tipo: tipo, dias: d, texto: texto, largo: largo };
   }
 
   let pedidosEstado = { ok: false, error: "", truncado: false, intento: false };
@@ -375,6 +402,7 @@
       return false;
     }
     pedidosCache = (r.data || []).map(prepPedido);
+    if (pedidosCache.length) colsPedidoNuevas = "pagado" in pedidosCache[0] && "plazo_entrega" in pedidosCache[0];
     pedidosEstado = { ok: true, error: "", truncado: r.truncado, intento: true, hayDatos: true };
     return true;
   }
@@ -975,12 +1003,17 @@
     const ok = ped.filter((p) => p.estado !== "cancelado"); // un pedido cancelado no es ingreso
     const ingresos = suma(ok, (p) => p.subtotal);
     const entregados = suma(ok.filter((p) => p.estado === "entregado"), (p) => p.subtotal);
+    // Caja: solo cuenta lo que ya se cobró. Lo que está con pago pendiente se ve aparte, como "por cobrar".
+    const okPagados = ok.filter(esPagado);
+    const cobrado = suma(okPagados, (p) => p.subtotal);
+    const porCobrar = ingresos - cobrado;
+    const nPorCobrar = ok.length - okPagados.length;
     const gastosPeriodo = gastosAll.filter((g) => g._f >= a && g._f <= b);
     const inversion = gastosPeriodo.filter(esInversion); // aparte: no cuenta en caja ni en ganancia
     const gastos = gastosPeriodo.filter((g) => !esInversion(g));
     const totalInversion = suma(inversion, (g) => g.monto);
     const totalGastos = suma(gastos, (g) => g.monto);
-    const saldo = ingresos - totalGastos;
+    const saldo = cobrado - totalGastos;
 
     // Ganancia neta = ingresos − costo de las piezas vendidas − otros gastos. El filamento y la luz ya van
     // dentro del costo de las piezas, así que esos dos gastos no se restan de nuevo.
@@ -999,13 +1032,16 @@
       cancelados: ped.length - ok.length,
       ingresos: ingresos,
       entregados: entregados,
+      cobrado: cobrado,
+      porCobrar: porCobrar,
+      nPorCobrar: nPorCobrar,
       gastos: gastos,
       inversion: inversion,
       totalInversion: totalInversion,
       totalGastos: totalGastos,
       saldo: saldo,
       ticket: ok.length ? ingresos / ok.length : 0,
-      margen: ingresos > 0 ? (saldo / ingresos) * 100 : 0,
+      margen: cobrado > 0 ? (saldo / cobrado) * 100 : 0,
       costoPiezas: costoPiezas,
       gastosOp: gastosOp,
       gastosEnCosto: totalGastos - gastosOp,
@@ -1267,7 +1303,10 @@
     if (hayP && hayG) {
       kSal = kpiHtml("Saldo de caja", fmtMoney(cur.saldo), cur.saldo >= 0 ? "pos" : "neg", [
         prev ? deltaMonto(cur.saldo, prev.saldo) : "Todo el historial",
-        cur.ingresos > 0 ? (cur.saldo >= 0 ? "Queda el " + Math.round(cur.margen) + "% de lo que entra" : "Los gastos superan a los ingresos") : "Sin ingresos en el período",
+        cur.cobrado > 0
+          ? (cur.saldo >= 0 ? "Queda el " + Math.round(cur.margen) + "% de lo cobrado" : "Los gastos superan a lo cobrado")
+          : cur.ingresos > 0 ? "Todavía no cobraste nada en el período" : "Sin ingresos en el período",
+        cur.nPorCobrar > 0 ? "Por cobrar: " + fmtMoney(cur.porCobrar) + " (" + cur.nPorCobrar + (cur.nPorCobrar === 1 ? " pedido" : " pedidos") + " con pago pendiente)" : "",
       ]);
     } else {
       kSal = kpiHtml("Saldo de caja", guion, "", ["Falta cargar datos"]);
@@ -1420,6 +1459,9 @@
     if (cur.pedEstimado > 0) {
       notas.push({ warn: false, html: "En " + cur.pedEstimado + (cur.pedEstimado === 1 ? " pedido" : " pedidos") + " se usó el costo actual del producto, porque no quedó guardado al vender." });
     }
+    if (cur.nPorCobrar > 0) {
+      notas.push({ warn: false, html: "Hay " + fmtMoney(cur.porCobrar) + " con pago pendiente (" + cur.nPorCobrar + (cur.nPorCobrar === 1 ? " pedido" : " pedidos") + "): la ganancia cuenta esas ventas, pero el saldo de caja solo suma lo cobrado." });
+    }
     if (cur.totalInversion > 0) {
       notas.push({ warn: false, html: "Inversión inicial del período (" + fmtMoney(cur.totalInversion) + ") no se resta de la ganancia ni de la caja: se ve aparte." });
     }
@@ -1480,7 +1522,7 @@
   }
 
   function firmaDe() {
-    return pedidosCache.length + "|" + pedidosCache.map((p) => p.id + ":" + p.estado + ":" + p.subtotal).join(",");
+    return pedidosCache.length + "|" + pedidosCache.map((p) => p.id + ":" + p.estado + ":" + p.subtotal + ":" + p.pagado + ":" + p.plazo_entrega).join(",");
   }
 
   async function refreshDatos(op) {
@@ -1532,6 +1574,10 @@
   const elBuscar = document.getElementById("pedidos-buscar");
   const elFiltroEstado = document.getElementById("pedidos-filtro-estado");
   const elFiltroCanal = document.getElementById("pedidos-filtro-canal");
+  const elFiltroPago = document.getElementById("pedidos-filtro-pago");
+  const elFiltroPlazo = document.getElementById("pedidos-filtro-plazo");
+  const elPlazosAviso = document.getElementById("pedidos-plazos");
+  const elPedidosSql = document.getElementById("pedidos-sql");
   const elPedidosTbody = document.getElementById("pedidos-tbody");
   const elPedidosMsg = document.getElementById("pedidos-msg");
   let msgTimer = null;
@@ -1575,6 +1621,8 @@
   elBuscar.addEventListener("input", renderPedidos);
   elFiltroEstado.addEventListener("change", renderPedidos);
   elFiltroCanal.addEventListener("change", renderPedidos);
+  elFiltroPago.addEventListener("change", renderPedidos);
+  elFiltroPlazo.addEventListener("change", renderPedidos);
 
   function mostrarMsgPedidos(tipo, texto, op) {
     elPedidosMsg.className = "inline-msg " + tipo;
@@ -1633,10 +1681,23 @@
   function pedidosBase() {
     const term = elBuscar.value.trim().toLowerCase();
     const canalFiltro = elFiltroCanal.value;
+    const pagoFiltro = elFiltroPago.value;
+    const plazoFiltro = elFiltroPlazo.value;
+    const hoy = todayStr();
     const rango = ffPedidos.rango();
     return pedidosCache.filter((p) => {
       if (canalFiltro !== "todos" && p.canal !== canalFiltro) return false;
       if (!ffEnRango(rango, p._dia)) return false;
+      // Un pedido cancelado no debe nada: no entra ni en "pago pendiente" ni en "pagados".
+      if (pagoFiltro === "pendientes" && (esPagado(p) || p.estado === "cancelado")) return false;
+      if (pagoFiltro === "pagados" && (!esPagado(p) || p.estado === "cancelado")) return false;
+      if (plazoFiltro !== "todos") {
+        const pe = plazoEstado(p, hoy);
+        if (plazoFiltro === "sin" && p._plazo) return false;
+        if (plazoFiltro === "con" && !p._plazo) return false;
+        if (plazoFiltro === "vencidos" && !(pe && pe.tipo === "vencido")) return false;
+        if (plazoFiltro === "pronto" && !(pe && (pe.tipo === "vencido" || pe.tipo === "hoy" || pe.tipo === "pronto"))) return false;
+      }
       if (term && ![p.cliente_nombre, p.cliente_telefono, p.cliente_email].filter(Boolean).join(" ").toLowerCase().includes(term)) return false;
       return true;
     });
@@ -1645,8 +1706,42 @@
   function pedidosVisibles(base) {
     const estadoFiltro = elFiltroEstado.value;
     const g = pedidosGrupo;
-    return (base || pedidosBase()).filter((p) => (g === "todos" || grupoDe(p.estado) === g) && (estadoFiltro === "todos" || p.estado === estadoFiltro));
+    const lista = (base || pedidosBase()).filter((p) => (g === "todos" || grupoDe(p.estado) === g) && (estadoFiltro === "todos" || p.estado === estadoFiltro));
+    // Mirando plazos, lo que vence antes va primero.
+    if (["pronto", "vencidos", "con"].indexOf(elFiltroPlazo.value) >= 0) lista.sort((a, b) => (a._plazo < b._plazo ? -1 : a._plazo > b._plazo ? 1 : 0));
+    return lista;
   }
+
+  // Aviso de arriba: pedidos activos con el plazo vencido o que vencen hoy (de todos los pedidos, sin importar los filtros).
+  function actualizarAvisoPlazos() {
+    const hoy = todayStr();
+    let vencidos = 0, hoyN = 0;
+    pedidosCache.forEach((p) => {
+      const pe = plazoEstado(p, hoy);
+      if (!pe) return;
+      if (pe.tipo === "vencido") vencidos++;
+      else if (pe.tipo === "hoy") hoyN++;
+    });
+    elPedidosSql.hidden = colsPedidoNuevas !== false;
+    if (!vencidos && !hoyN) { elPlazosAviso.hidden = true; elPlazosAviso.innerHTML = ""; return; }
+    const partes = [];
+    if (vencidos) partes.push("<strong>" + vencidos + (vencidos === 1 ? " pedido con el plazo vencido" : " pedidos con el plazo vencido") + "</strong>");
+    if (hoyN) partes.push("<strong>" + hoyN + (hoyN === 1 ? " vence hoy" : " vencen hoy") + "</strong>");
+    elPlazosAviso.className = "plazo-aviso" + (vencidos ? " late" : "");
+    elPlazosAviso.innerHTML = "<span>" + partes.join(" · ") + '</span><button type="button" class="btn-soft" data-act="ver-plazos">Ver los urgentes</button>';
+    elPlazosAviso.hidden = false;
+  }
+  elPlazosAviso.addEventListener("click", (e) => {
+    if (!e.target.closest('[data-act="ver-plazos"]')) return;
+    elBuscar.value = "";
+    elFiltroCanal.value = "todos";
+    elFiltroPago.value = "todos";
+    ffPedidos.reiniciar();
+    setGrupoPedidos("activos");
+    elFiltroPlazo.value = "pronto";
+    pedidosSucio = false;
+    renderPedidos();
+  });
   function actualizarChipsPedidos(base) {
     const n = { activos: 0, finalizados: 0, cancelados: 0, todos: base.length };
     base.forEach((p) => { n[grupoDe(p.estado)]++; });
@@ -1655,7 +1750,27 @@
     });
   }
 
+  // Botón de pago de cada pedido (no se muestra en cancelados, ni mientras las columnas nuevas no existan en la base).
+  function pagoChipHtml(p) {
+    if (p.estado === "cancelado" || colsPedidoNuevas === false) return "";
+    const ok = esPagado(p);
+    const quien = p.cliente_nombre || "este cliente";
+    return (
+      '<button type="button" class="pago-chip ' + (ok ? "ok" : "pend") + '" data-act="toggle-pago" data-id="' + escAttr(p.id) + '" aria-pressed="' + (ok ? "true" : "false") + '" ' +
+      'aria-label="' + escAttr((ok ? "Pagado. Tocá para marcar el pedido de " + quien + " como pago pendiente" : "Pago pendiente. Tocá para marcar el pedido de " + quien + " como pagado")) + '">' +
+      (ok ? "✓ Pagado" : "Pago pendiente") + "</button>"
+    );
+  }
+  function subtotalCeldaHtml(p) {
+    return '<span class="sub-cell"><span>' + fmtMoney(p.subtotal) + "</span>" + pagoChipHtml(p) + "</span>";
+  }
+  function entregaCeldaHtml(p) {
+    const pe = colsPedidoNuevas === false ? null : plazoEstado(p, todayStr());
+    return '<span class="sub-cell"><span>' + escHtml(p.entrega) + "</span>" + (pe && p.estado !== "cancelado" ? '<span class="plazo-chip ' + pe.tipo + '">' + escHtml(pe.texto) + "</span>" : "") + "</span>";
+  }
+
   function renderPedidos() {
+    actualizarAvisoPlazos();
     const base = pedidosBase();
     actualizarChipsPedidos(base);
     const list = pedidosVisibles(base);
@@ -1676,7 +1791,7 @@
         return (
           '<tr class="clickable" data-pedido-id="' + id + '"><td data-label="Fecha">' + fmtFecha(p.created_at) +
           '</td><td data-label="Cliente"><span>' + escHtml(p.cliente_nombre) + canalTag(p.canal) + "<br><span class='muted'>" + escHtml(p.cliente_telefono) + '</span></span></td><td data-label="Items">' +
-          resumenItems(p.items) + '</td><td data-label="Subtotal">' + fmtMoney(p.subtotal) + '</td><td data-label="Entrega">' + escHtml(p.entrega) +
+          resumenItems(p.items) + '</td><td data-label="Subtotal">' + subtotalCeldaHtml(p) + '</td><td data-label="Entrega">' + entregaCeldaHtml(p) +
           '</td><td data-label="Estado"><select class="estado-select estado-' + estadoClase + '" data-id="' + id + '" aria-label="Estado del pedido de ' + escAttr(p.cliente_nombre) + '">' +
           estadoOptions + '</select></td><td class="act"><div class="row-acts"><button type="button" class="btn-secondary btn-small btn-detalle" aria-expanded="false" aria-controls="detalle-' + id + '">Detalle</button>' +
           '<button type="button" class="btn-secondary btn-small" data-act="editar-pedido" data-id="' + id + '" aria-label="Editar el pedido de ' + escAttr(p.cliente_nombre) + '">Editar</button>' +
@@ -1685,6 +1800,16 @@
         );
       })
       .join("");
+  }
+
+  // Líneas extra del detalle: si está cobrado y el plazo de entrega prometido.
+  function detallePagoPlazo(p) {
+    if (colsPedidoNuevas === false) return "";
+    let h = "";
+    if (p.estado !== "cancelado") h += "<br><strong>Cobro:</strong> " + (esPagado(p) ? "pagado" : '<span class="gp-neg">pago pendiente</span> (no suma al saldo de caja)');
+    const pe = plazoEstado(p, todayStr());
+    h += "<br><strong>Plazo de entrega:</strong> " + (pe ? (pe.tipo === "vencido" ? '<span class="gp-neg">' + escHtml(pe.largo) + "</span>" : escHtml(pe.largo)) : "sin plazo");
+    return h;
   }
 
   function detallePedido(p) {
@@ -1730,7 +1855,7 @@
       "<br><br><strong>Canal:</strong> " + escHtml(CANAL_LABEL[p.canal] || p.canal) + cotTxt +
       "<br><strong>Email:</strong> " + escHtml(p.cliente_email || "—") +
       "<br><strong>Dirección:</strong> " + escHtml(p.direccion || "—") +
-      "<br><strong>Pago:</strong> " + escHtml(p.pago || "—") +
+      "<br><strong>Pago:</strong> " + escHtml(p.pago || "—") + detallePagoPlazo(p) +
       "<br><strong>Notas:</strong> " + escHtml(p.notas || "—")
     );
   }
@@ -1754,6 +1879,10 @@
     if (accion) {
       if (accion.dataset.act === "editar-pedido") abrirEdicionPedido(accion.dataset.id);
       else if (accion.dataset.act === "eliminar-pedido") eliminarPedido(accion.dataset.id);
+      else if (accion.dataset.act === "toggle-pago") {
+        const p = pedidosCache.find((x) => String(x.id) === String(accion.dataset.id));
+        if (p) cambiarPago(p.id, !esPagado(p), accion);
+      }
       return;
     }
     const tr = e.target.closest("tr[data-pedido-id]");
@@ -1801,10 +1930,74 @@
       renderPedidos();
       mostrarMsgPedidos("ok", "El pedido de " + (p.cliente_nombre || "este cliente") + " pasó a «" + (ESTADO_LABEL[nuevoEstado] || nuevoEstado) + "» y ahora está en " + GRUPOS[grupoDe(nuevoEstado)].label + ".");
     } else {
+      refrescarFilaPedido(p);
       actualizarChipsPedidos(pedidosBase());
     }
+    actualizarAvisoPlazos(); // entregar o cancelar un pedido cambia si su plazo cuenta como urgente
     renderDashboard();
     actualizarBadge();
+  }
+
+  // Redibuja solo las celdas de una fila que dependen del estado o del pago (sin tocar el selector de estado que se está usando).
+  function refrescarFilaPedido(p) {
+    const filas = elPedidosTbody.querySelectorAll("tr[data-pedido-id]");
+    for (let i = 0; i < filas.length; i++) {
+      if (filas[i].dataset.pedidoId !== String(p.id)) continue;
+      filas[i].querySelector('td[data-label="Subtotal"]').innerHTML = subtotalCeldaHtml(p);
+      filas[i].querySelector('td[data-label="Entrega"]').innerHTML = entregaCeldaHtml(p);
+      const det = filas[i].nextElementSibling;
+      if (det && det.classList.contains("detalle-row")) det.firstElementChild.innerHTML = detallePedido(p);
+      return filas[i];
+    }
+    return null;
+  }
+
+  // Marca un pedido como pagado o con pago pendiente. El saldo de caja del Dashboard cambia en el acto.
+  async function cambiarPago(id, pagado, btn) {
+    const p = pedidosCache.find((x) => String(x.id) === String(id));
+    if (!p) return;
+    const quien = p.cliente_nombre || "este cliente";
+    const previo = esPagado(p);
+    if (btn) btn.disabled = true;
+    const volver = (texto) => {
+      if (btn) btn.disabled = false;
+      mostrarMsgPedidos("err", texto + " El pedido de " + quien + " quedó como estaba (" + (previo ? "pagado" : "pago pendiente") + ").");
+    };
+    let res;
+    try {
+      res = await stratoSb.from("pedidos").update({ pagado: pagado }).eq("id", id).select("id");
+    } catch (e) {
+      volver("No se pudo guardar el cambio de pago (" + (e && e.message ? e.message : "error de conexión") + ").");
+      return;
+    }
+    if (res.error) {
+      const t = String(res.error.message || "") + " " + String(res.error.code || "");
+      if (/pagado|PGRST204/i.test(t)) {
+        colsPedidoNuevas = false;
+        renderPedidos();
+        mostrarMsgPedidos("err", "Todavía falta correr " + SQL_PAGO + " en Supabase (agrega el pago pendiente y el plazo de entrega). Corrélo y volvé a intentar.");
+        return;
+      }
+      volver("No se pudo guardar el cambio de pago (" + res.error.message + ").");
+      return;
+    }
+    if (Array.isArray(res.data) && res.data.length === 0) { volver("El cambio no se guardó (no se encontró el pedido o falta permiso)."); return; }
+
+    p.pagado = pagado;
+    colsPedidoNuevas = true;
+    if (msgTipo === "err" || msgTipo === "cambios") ocultarMsgPedidos();
+    // Si con el filtro de pago de ahora el pedido ya no corresponde a la lista, se redibuja; si no, se actualiza solo su fila.
+    const sigue = pedidosVisibles().some((x) => String(x.id) === String(id));
+    if (!sigue) {
+      renderPedidos();
+    } else {
+      const fila = refrescarFilaPedido(p);
+      const nuevo = fila && fila.querySelector(".pago-chip");
+      if (nuevo) nuevo.focus({ preventScroll: true });
+      actualizarChipsPedidos(pedidosBase());
+    }
+    mostrarMsgPedidos("ok", "El pedido de " + quien + " (" + fmtMoney(num(p.subtotal)) + ") quedó " + (pagado ? "como pagado: ya suma al saldo de caja." : "con pago pendiente: no suma al saldo de caja hasta que lo marques como pagado."));
+    renderDashboard();
   }
 
   // Desde el dashboard: abre Pedidos ya filtrado por estado, y marca el pedido si se pidió uno.
@@ -1812,6 +2005,8 @@
     activarPanel(document.getElementById("tab-pedidos"), false);
     elBuscar.value = "";
     elFiltroCanal.value = "todos";
+    elFiltroPago.value = "todos";
+    elFiltroPlazo.value = "todos";
     ffPedidos.reiniciar(); // los números del Resumen son de todo el historial: se muestra sin filtro de fechas
     setGrupoPedidos(estado && ESTADOS.includes(estado) ? grupoDe(estado) : "todos", estado && ESTADOS.includes(estado) ? estado : null);
     pedidosSucio = false;
@@ -1840,6 +2035,18 @@
   const elVentaError = document.getElementById("venta-error");
   let ventaOpc = [];
   let ventaGuardando = false;
+
+  // Una venta nueva viene como «Entregado»: si además tiene plazo, ese plazo nunca va a avisar. Se lo decimos al cargarla.
+  function actualizarAvisoPlazoVenta() {
+    const el = document.getElementById("venta-plazo-aviso");
+    if (!el) return;
+    el.hidden = !(ventaEditId === null && document.getElementById("venta-plazo").value && document.getElementById("venta-estado").value === "entregado");
+  }
+  ["venta-plazo", "venta-estado"].forEach((id) => {
+    const e = document.getElementById(id);
+    e.addEventListener("input", actualizarAvisoPlazoVenta);
+    e.addEventListener("change", actualizarAvisoPlazoVenta);
+  });
 
   function armarOpcionesVenta() {
     ventaOpc = [];
@@ -2008,6 +2215,9 @@
     document.getElementById("venta-fecha").value = todayStr();
     document.getElementById("venta-estado").value = "entregado";
     document.getElementById("venta-canal").value = "instagram";
+    document.getElementById("venta-plazo").value = "";
+    actualizarAvisoPlazoVenta();
+    document.getElementById("venta-pagado").checked = true; // una venta cargada a mano suele estar cobrada; destildalo si falta cobrar
     elVentaError.textContent = "";
     armarOpcionesVenta();
     elVentaItems.innerHTML = "";
@@ -2050,6 +2260,8 @@
     elVentaToggle.textContent = "Cerrar";
     document.getElementById("venta-cliente").value = limpiarTexto(c.cliente || "", 80);
     document.getElementById("venta-estado").value = "confirmado";
+    actualizarAvisoPlazoVenta();
+    document.getElementById("venta-pagado").checked = false; // un trabajo por encargar todavía no se cobró
     const f = filasVenta()[0];
     f.sel.value = "otro";
     f.otro.hidden = false;
@@ -2117,6 +2329,9 @@
     asegurarOpcion("venta-entrega", p.entrega || "Retiro / en mano");
     asegurarOpcion("venta-pago", p.pago || "");
     document.getElementById("venta-notas").value = p.notas || "";
+    document.getElementById("venta-plazo").value = p._plazo || "";
+    actualizarAvisoPlazoVenta();
+    document.getElementById("venta-pagado").checked = esPagado(p);
     document.getElementById("venta-email").value = p.cliente_email || "";
     document.getElementById("venta-direccion").value = p.direccion || "";
 
@@ -2191,6 +2406,8 @@
     if (elFiltroEstado.value !== "todos") partes.push(ESTADO_LABEL[elFiltroEstado.value] || elFiltroEstado.value);
     if (ffPedidos.activo()) partes.push(ffTexto(ffPedidos.rango()));
     if (elFiltroCanal.value !== "todos") partes.push(CANAL_LABEL[elFiltroCanal.value] || elFiltroCanal.value);
+    if (elFiltroPago.value !== "todos") partes.push(elFiltroPago.value === "pendientes" ? "solo pago pendiente" : "solo pagados");
+    if (elFiltroPlazo.value !== "todos") partes.push("plazo: " + elFiltroPlazo.options[elFiltroPlazo.selectedIndex].text.toLowerCase());
     if (elBuscar.value.trim()) partes.push("búsqueda «" + elBuscar.value.trim() + "»");
     return partes.join(" · ");
   }
@@ -2204,11 +2421,12 @@
         cols: [
           { t: "Fecha", w: 12, tipo: "fecha" }, { t: "Cliente", w: 24 }, { t: "Contacto", w: 18 }, { t: "Canal", w: 14 },
           { t: "Productos", w: 46, ajustar: true }, { t: "Subtotal ($U)", w: 14, tipo: "dinero" }, { t: "Entrega", w: 24 }, { t: "Pago", w: 20 },
+          { t: "Cobro", w: 16 }, { t: "Plazo de entrega", w: 16, tipo: "fecha" },
           { t: "Estado", w: 15 }, { t: "Email", w: 26 }, { t: "Dirección", w: 28 }, { t: "Notas", w: 30, ajustar: true },
         ],
         filas: list.map((p) => [
           p._dia, p.cliente_nombre, p.cliente_telefono, CANAL_LABEL[p.canal] || p.canal, (p.items || []).map(itemTexto).join("; "), num(p.subtotal),
-          p.entrega, p.pago, ESTADO_LABEL[p.estado] || p.estado, p.cliente_email, p.direccion, p.notas,
+          p.entrega, p.pago, p.estado === "cancelado" ? "" : esPagado(p) ? "Pagado" : "Pago pendiente", p._plazo, ESTADO_LABEL[p.estado] || p.estado, p.cliente_email, p.direccion, p.notas,
         ]),
       };
       const filasItems = [];
@@ -2271,6 +2489,11 @@
     if (!ESTADOS.includes(estado) && !estadoRaro) return falla("Elegí un estado.", document.getElementById("venta-estado"));
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return falla("Falta la fecha de la venta.", document.getElementById("venta-fecha"));
     if (fecha > todayStr()) return falla("La fecha de la venta no puede ser futura.", document.getElementById("venta-fecha"));
+    const plazo = document.getElementById("venta-plazo").value;
+    if (plazo && (!/^\d{4}-\d{2}-\d{2}$/.test(plazo) || plazo < "2020-01-01" || plazo > addDays(todayStr(), 730))) {
+      return falla("El plazo de entrega no es una fecha válida (tiene que estar dentro de los próximos 2 años).", document.getElementById("venta-plazo"));
+    }
+    const pagado = document.getElementById("venta-pagado").checked;
     if (!cliente) return falla("Falta el nombre del cliente.", document.getElementById("venta-cliente"));
 
     const items = [];
@@ -2342,6 +2565,13 @@
       estado: estado,
       canal: canal,
     };
+    // Pago y plazo van en columnas nuevas. Si la base todavía no las tiene y el pedido no necesita nada especial
+    // (pagado y sin plazo, que es lo de siempre), se guarda sin ellas para no trabar la carga.
+    const necesitaColsNuevas = !pagado || !!plazo || (editando && (ventaEditOrig.plazo_entrega || ventaEditOrig.pagado === false));
+    if (colsPedidoNuevas !== false || necesitaColsNuevas) {
+      payload.pagado = pagado;
+      payload.plazo_entrega = plazo || null;
+    }
     // Una venta de hoy se guarda con la hora actual (la pone la base); una de un día anterior, al mediodía de ese día en Uruguay.
     // Al editar, la fecha solo se toca si la cambiaste.
     if (editando) {
@@ -2356,14 +2586,30 @@
     btn.disabled = true;
     btn.textContent = "Guardando…";
     let error = null, sinFilas = false;
-    try {
+    const guardarPayload = async (pl) => {
       if (editando) {
-        const res = await stratoSb.from("pedidos").update(payload).eq("id", ventaEditId).select("id");
-        error = res.error;
-        if (!error && Array.isArray(res.data) && res.data.length === 0) sinFilas = true;
-      } else {
-        ({ error } = await stratoSb.from("pedidos").insert([payload]));
+        const res = await stratoSb.from("pedidos").update(pl).eq("id", ventaEditId).select("id");
+        return { error: res.error, sinFilas: !res.error && Array.isArray(res.data) && res.data.length === 0 };
       }
+      const res = await stratoSb.from("pedidos").insert([pl]);
+      return { error: res.error, sinFilas: false };
+    };
+    try {
+      let r = await guardarPayload(payload);
+      // Si la base todavía no tiene las columnas nuevas: sin nada especial que guardar se reintenta sin ellas; si no, se avisa.
+      if (r.error && "pagado" in payload && /pagado|plazo_entrega/i.test(String(r.error.message || "") + " " + String(r.error.details || ""))) {
+        colsPedidoNuevas = false;
+        if (necesitaColsNuevas) {
+          r = { error: { message: "faltan las columnas del pago y el plazo", faltaSql: true }, sinFilas: false };
+        } else {
+          const sin = Object.assign({}, payload);
+          delete sin.pagado;
+          delete sin.plazo_entrega;
+          r = await guardarPayload(sin);
+        }
+      }
+      error = r.error;
+      sinFilas = r.sinFilas;
     } catch (err) {
       error = { message: err && err.message ? err.message : "error de conexión" };
     }
@@ -2372,7 +2618,9 @@
     btn.textContent = textoBtn;
     if (error) {
       const txt = String(error.message || "") + " " + String(error.code || "");
-      if (/canal|row-level security|permission denied|42501|PGRST204/i.test(txt)) {
+      if (error.faltaSql) {
+        elVentaError.textContent = "Todavía falta correr " + SQL_PAGO + " en Supabase (agrega el pago pendiente y el plazo de entrega). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
+      } else if (/canal|row-level security|permission denied|42501|PGRST204/i.test(txt)) {
         elVentaError.textContent = editando
           ? "No se pudo guardar el cambio: falta un permiso en Supabase. Corré supabase/migracion_monedas_inversion.sql (y supabase/migracion_dashboard.sql si todavía no lo corriste) y volvé a guardar: lo que cambiaste sigue acá."
           : "Todavía falta correr supabase/migracion_dashboard.sql en Supabase (agrega el canal y el permiso para cargar ventas). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
@@ -2395,6 +2643,8 @@
     if (!editando) {
       // la venta nueva tiene que verse: se sacan los filtros
       elFiltroCanal.value = "todos";
+      elFiltroPago.value = "todos";
+      elFiltroPlazo.value = "todos";
       elBuscar.value = "";
       ffPedidos.reiniciar();
       setGrupoPedidos("todos");
@@ -3990,8 +4240,9 @@
                          (peso_gr = suma de los gramos de todas las filas)
      costo_electricidad = (potencia_w * horas_uso / 1000) * costo_kwh
      desgaste_maquina  = (costo_reposicion / vida_util_horas) * horas_uso
-     margen_error_monto = margen_error_pct * (material + electricidad + desgaste + acabados)
-     costo_base        = material + electricidad + desgaste + acabados + margen_error_monto
+     uso_maquina       = valor_hora_maquina * horas_uso       (el $U por hora de máquina en uso: proporcional al tiempo de impresión)
+     margen_error_monto = margen_error_pct * (material + electricidad + desgaste + uso_maquina + acabados)
+     costo_base        = material + electricidad + desgaste + uso_maquina + acabados + margen_error_monto
      total_a_cobrar     = costo_base * margen_ganancia + accesorio_adicional * margen_accesorio   (margen_accesorio = 1: se cobra al costo)
      costo_total        = costo_base + accesorio_adicional
      ganancia_neta      = total_a_cobrar - costo_total
@@ -4032,10 +4283,12 @@
     const margenAccesorio = Number.isFinite(rawMA) && rawMA >= 1 ? rawMA : 1; // 1 = el accesorio se cobra al costo
 
     const horasUso = horasImpresion + minutosAdicionales / 60;
+    const valorHora = Math.max(numVal("calc-valor-hora"), 0); // $U por hora de máquina en uso
     const costoElectricidad = ((potenciaW * horasUso) / 1000) * costoElectricidadKwh;
     const desgasteMaquina = (costoReposicion / vidaUtilHoras) * horasUso;
-    const margenErrorMonto = margenErrorPct * (costoMaterial + costoElectricidad + desgasteMaquina + acabados);
-    const costoBase = costoMaterial + costoElectricidad + desgasteMaquina + acabados + margenErrorMonto;
+    const usoMaquina = valorHora * horasUso;
+    const margenErrorMonto = margenErrorPct * (costoMaterial + costoElectricidad + desgasteMaquina + usoMaquina + acabados);
+    const costoBase = costoMaterial + costoElectricidad + desgasteMaquina + usoMaquina + acabados + margenErrorMonto;
     const accesorioCobrado = accesorio * margenAccesorio;
     const costoTotal = costoBase + accesorio;
     const totalACobrar = costoBase * margenGanancia + accesorioCobrado;
@@ -4047,7 +4300,7 @@
       potenciaW, vidaUtilHoras, costoReposicion, precioFilamento, costoElectricidadKwh,
       horasImpresion, minutosAdicionales, pesoGr, margenErrorPct, margenGanancia, accesorio, acabados,
       margenAccesorio, accesorioCobrado, costoTotal,
-      horasUso, costoMaterial, costoElectricidad, desgasteMaquina, margenErrorMonto,
+      horasUso, valorHora, usoMaquina, costoMaterial, costoElectricidad, desgasteMaquina, margenErrorMonto,
       costoBase, totalACobrar, gananciaNeta, gananciaPct,
     };
   }
@@ -4073,6 +4326,7 @@
     html += calcLinea("Costo material", detalleMaterial, r.costoMaterial);
     html += calcLinea("Costo electricidad", r.potenciaW + " W · " + fmtMoney(r.costoElectricidadKwh) + "/kWh", r.costoElectricidad);
     html += calcLinea("Desgaste máquina", "Amortización por " + r.vidaUtilHoras + " h", r.desgasteMaquina);
+    if (r.valorHora > 0) html += calcLinea("Uso de máquina", fmtMoney(r.valorHora) + "/h × " + fmtNum(r.horasUso, 2) + " h", r.usoMaquina);
     html += calcLinea("Margen de error", "+" + Math.round(r.margenErrorPct * 100) + "% sobre costos", r.margenErrorMonto, "+");
     if (r.acabados) html += calcLinea("Insumos extra / acabado", null, r.acabados, "+");
     html += '<div class="calc-line-total"><div>Costo base</div><div>' + fmtMoney(r.costoBase) + "</div></div>";
@@ -4096,7 +4350,7 @@
 
   document
     .querySelectorAll(
-      "#calc-potencia, #calc-vida-util, #calc-costo-reposicion, #calc-costo-electricidad, " +
+      "#calc-potencia, #calc-vida-util, #calc-costo-reposicion, #calc-costo-electricidad, #calc-valor-hora, " +
         "#calc-horas, #calc-minutos, #calc-margen-ganancia, #calc-accesorio, #calc-margen-accesorio, #calc-acabados"
     )
     .forEach((el) => el.addEventListener("input", renderResultados));
@@ -4201,6 +4455,14 @@
     if (materiales.length) setMaterialSelect(materiales.join(" + "));
   }
 
+  /* ---- Valor hora de máquina en uso ---- */
+  // El de la máquina si lo tiene (columna `valor_hora_uso`); si no, el de siempre ($U 90).
+  function valorHoraDe(m) {
+    if (!m || m.valor_hora_uso === null || m.valor_hora_uso === undefined || m.valor_hora_uso === "") return VALOR_HORA_DEFECTO;
+    const v = Number(m.valor_hora_uso);
+    return Number.isFinite(v) && v >= 0 ? v : VALOR_HORA_DEFECTO;
+  }
+
   /* ---- Selector de máquina ---- */
   function fillMaquinaSelect() {
     const sel = document.getElementById("calc-maquina");
@@ -4216,6 +4478,7 @@
       document.getElementById("calc-potencia").value = m.potencia_w;
       document.getElementById("calc-vida-util").value = m.vida_util_horas;
       document.getElementById("calc-costo-reposicion").value = m.costo_reposicion;
+      document.getElementById("calc-valor-hora").value = valorHoraDe(m);
     }
     renderResultados();
   });
@@ -4229,6 +4492,7 @@
     document.getElementById("calc-potencia").value = 200;
     document.getElementById("calc-vida-util").value = 5000;
     document.getElementById("calc-costo-reposicion").value = 0;
+    document.getElementById("calc-valor-hora").value = VALOR_HORA_DEFECTO;
     document.getElementById("calc-costo-electricidad").value = 10;
     document.getElementById("calc-nombre-pieza").value = "";
     document.getElementById("calc-cliente").value = "";
@@ -4271,6 +4535,7 @@
         potencia_w: r.potenciaW,
         vida_util_horas: r.vidaUtilHoras,
         costo_reposicion: r.costoReposicion,
+        valor_hora_maquina: r.valorHora,
         precio_filamento_kg: r.precioFilamento,
         filamentos: r.filamentos,
         costo_electricidad_kwh: r.costoElectricidadKwh,
@@ -4290,6 +4555,7 @@
         costo_material: r.costoMaterial,
         costo_electricidad: r.costoElectricidad,
         desgaste_maquina: r.desgasteMaquina,
+        costo_uso_maquina: r.usoMaquina,
         margen_error_monto: r.margenErrorMonto,
         costo_base: r.costoBase,
         costo_total: r.costoTotal,
@@ -4391,6 +4657,9 @@
     document.getElementById("calc-potencia").value = inp.potencia_w ?? 200;
     document.getElementById("calc-vida-util").value = inp.vida_util_horas ?? 5000;
     document.getElementById("calc-costo-reposicion").value = inp.costo_reposicion ?? 0;
+    // Las cotizaciones anteriores al valor hora no lo tenían: se abren en 0 para que su precio no cambie al guardarlas de nuevo.
+    const sinValorHora = inp.valor_hora_maquina === undefined || inp.valor_hora_maquina === null;
+    document.getElementById("calc-valor-hora").value = sinValorHora ? 0 : inp.valor_hora_maquina;
     document.getElementById("calc-costo-electricidad").value = inp.costo_electricidad_kwh ?? 10;
     document.getElementById("calc-nombre-pieza").value = c.nombre_pieza || "";
     document.getElementById("calc-cliente").value = c.cliente || "";
@@ -4421,7 +4690,8 @@
     document.getElementById("calc-relleno").value = inp.relleno_pct ?? 20;
 
     document.getElementById("calc-guardar-btn").textContent = "Guardar cambios";
-    document.getElementById("calc-editing-label").textContent = "— editando cotización guardada";
+    document.getElementById("calc-editing-label").textContent = "— editando cotización guardada" +
+      (sinValorHora ? " (es anterior al valor hora de máquina: queda en $U 0 para no cambiar su precio; ponelo si querés sumarlo)" : "");
     document.getElementById("calc-error").textContent = "";
 
     renderResultados();
@@ -4459,7 +4729,7 @@
         (m) =>
           "<tr><td>" + escHtml(m.nombre) + (m.marca ? "<br><span class='muted'>" + escHtml(m.marca) + "</span>" : "") +
           "</td><td>" + m.potencia_w + " W</td><td>" + m.vida_util_horas + " h</td><td>" + fmtMoney(m.costo_reposicion) +
-          "</td><td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarMaquina('" +
+          "</td><td>" + fmtMoney(valorHoraDe(m)) + "/h</td><td><button type='button' class='btn-secondary btn-small' onclick=\"stratoAdminEditarMaquina('" +
           m.id + "')\">Editar</button> <button type='button' class='btn-danger btn-small' onclick=\"stratoAdminEliminarMaquina('" +
           m.id + "')\">Eliminar</button></td></tr>"
       )
@@ -4475,6 +4745,7 @@
     document.getElementById("maq-potencia").value = m.potencia_w;
     document.getElementById("maq-vida-util").value = m.vida_util_horas;
     document.getElementById("maq-costo-reposicion").value = m.costo_reposicion;
+    document.getElementById("maq-valor-hora").value = valorHoraDe(m);
     document.getElementById("maquina-form-title").textContent = "Editar máquina";
     document.getElementById("maq-submit-btn").textContent = "Guardar cambios";
     document.getElementById("maq-cancel-btn").style.display = "inline-block";
@@ -4506,6 +4777,7 @@
     document.getElementById("maq-potencia").value = 200;
     document.getElementById("maq-vida-util").value = 5000;
     document.getElementById("maq-costo-reposicion").value = 0;
+    document.getElementById("maq-valor-hora").value = VALOR_HORA_DEFECTO;
     document.getElementById("maquina-form-title").textContent = "Nueva máquina";
     document.getElementById("maq-submit-btn").textContent = "Guardar máquina";
     document.getElementById("maq-cancel-btn").style.display = "none";
@@ -4521,14 +4793,22 @@
       potencia_w: numVal("maq-potencia"),
       vida_util_horas: numVal("maq-vida-util"),
       costo_reposicion: numVal("maq-costo-reposicion"),
+      valor_hora_uso: numVal("maq-valor-hora"),
     };
     if (!payload.nombre) { errEl.textContent = "Falta el nombre."; return; }
+    if (document.getElementById("maq-valor-hora").value === "" || payload.valor_hora_uso < 0) { errEl.textContent = "El valor hora tiene que ser un número desde 0."; return; }
 
-    let error;
-    if (editingMaquinaId) {
-      ({ error } = await stratoSb.from("maquinas_3d").update(payload).eq("id", editingMaquinaId));
-    } else {
-      ({ error } = await stratoSb.from("maquinas_3d").insert([payload]));
+    const guardar = (pl) => (editingMaquinaId
+      ? stratoSb.from("maquinas_3d").update(pl).eq("id", editingMaquinaId)
+      : stratoSb.from("maquinas_3d").insert([pl]));
+    let { error } = await guardar(payload);
+    let aviso = "";
+    // La base todavía no tiene la columna del valor hora (falta el SQL): se guarda la máquina igual y se avisa.
+    if (error && /valor_hora_uso/i.test(String(error.message || "") + " " + String(error.details || ""))) {
+      const sin = Object.assign({}, payload);
+      delete sin.valor_hora_uso;
+      ({ error } = await guardar(sin));
+      aviso = "La máquina se guardó, pero sin su valor hora: falta correr " + SQL_PAGO + " en Supabase. Mientras tanto la calculadora usa $U " + VALOR_HORA_DEFECTO + " por hora (lo podés cambiar en cada cotización).";
     }
     if (error) { errEl.textContent = error.message; return; }
 
@@ -4536,6 +4816,7 @@
     renderMaquinas();
     fillMaquinaSelect();
     resetMaquinaForm();
+    errEl.textContent = aviso;
   });
 
   /* ============ INIT ============ */
