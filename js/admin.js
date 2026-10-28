@@ -453,21 +453,14 @@
     return true;
   }
 
-  // Costo real de fabricar la pieza de una cotización: costo base + uso de máquina + accesorio. El accesorio y el uso de
-  // máquina se cobran a costo (sin margen), pero igual son plata que sale, así que cuentan para la ganancia neta.
-  // Las cotizaciones guardadas desde que el uso de máquina va aparte llevan la marca `uso_maquina_aparte`; las demás
-  // lo tienen (si lo tienen) adentro del costo base, así que no se vuelve a sumar.
+  // Costo real de fabricar la pieza de una cotización: costo base + accesorio. El accesorio se cobra a costo
+  // (sin margen), pero igual es plata que sale, así que cuenta para la ganancia neta. El uso de máquina NO es costo
+  // (es un recargo por el tiempo de máquina), así que no se suma acá: queda como ganancia.
   function costoDeCotizacion(c) {
     const r = c && c.resultados;
     if (!r || r.costo_base === null || r.costo_base === undefined || r.costo_base === "" || !Number.isFinite(Number(r.costo_base))) return null;
     const acc = Number(c.inputs && c.inputs.costo_accesorio);
-    const uso = r.uso_maquina_aparte === true ? Number(r.costo_uso_maquina) : 0;
-    return redondear2(Number(r.costo_base) + (Number.isFinite(acc) && acc > 0 ? acc : 0) + (Number.isFinite(uso) && uso > 0 ? uso : 0));
-  }
-  function usoMaquinaDeCotizacion(c) {
-    const r = c && c.resultados;
-    const uso = r && r.uso_maquina_aparte === true ? Number(r.costo_uso_maquina) : 0;
-    return Number.isFinite(uso) && uso > 0 ? redondear2(uso) : 0;
+    return redondear2(Number(r.costo_base) + (Number.isFinite(acc) && acc > 0 ? acc : 0));
   }
   function accesorioDeCotizacion(c) {
     const acc = Number(c && c.inputs && c.inputs.costo_accesorio);
@@ -2189,7 +2182,7 @@
     const previo = pedidosCache.find((p) => p.estado !== "cancelado" && (p.items || []).some((it) => it && it.cotizacion_id === ventaOrigen.id));
     box.innerHTML =
       '<div class="vo-txt"><strong>Desde la cotización «' + escHtml(ventaOrigen.nombre) + "»</strong><br>" +
-      "Sugerido: " + fmtMoney(ventaOrigen.sugerido) + (ventaOrigen.costo !== null ? " · Costo: " + fmtMoney(ventaOrigen.costo) + (ventaOrigen.accesorio || ventaOrigen.uso ? " (incluye " + [ventaOrigen.uso ? "el uso de máquina de " + fmtMoney(ventaOrigen.uso) : "", ventaOrigen.accesorio ? "el accesorio de " + fmtMoney(ventaOrigen.accesorio) : ""].filter(Boolean).join(" y ") + ")" : "") : "") +
+      "Sugerido: " + fmtMoney(ventaOrigen.sugerido) + (ventaOrigen.costo !== null ? " · Costo: " + fmtMoney(ventaOrigen.costo) + (ventaOrigen.accesorio ? " (incluye el accesorio de " + fmtMoney(ventaOrigen.accesorio) + ")" : "") : "") +
       ". Cambiá el precio por unidad si querés cobrar otro valor." +
       (previo ? "<br>Ojo: esta cotización ya se cargó como pedido el " + fmtDMY(previo._dia) + "." : "") +
       '<span class="vo-diff" id="venta-origen-diff"></span></div>' +
@@ -2261,7 +2254,7 @@
     const cb = costoDeCotizacion(c);
     activarPanel(document.getElementById("tab-pedidos"), false);
     resetVenta();
-    ventaOrigen = { id: c.id, nombre: String(c.nombre_pieza || "Pieza"), sugerido: sugerido, costo: cb, accesorio: accesorioDeCotizacion(c), uso: usoMaquinaDeCotizacion(c) };
+    ventaOrigen = { id: c.id, nombre: String(c.nombre_pieza || "Pieza"), sugerido: sugerido, costo: cb, accesorio: accesorioDeCotizacion(c) };
     mostrarOrigenVenta();
     elVentaBody.hidden = false;
     elVentaToggle.setAttribute("aria-expanded", "true");
@@ -4252,10 +4245,11 @@
      margen_error_monto = margen_error_pct * (material + electricidad + desgaste + acabados)
      costo_base        = material + electricidad + desgaste + acabados + margen_error_monto
      total_a_cobrar     = costo_base * margen_ganancia + uso_maquina + accesorio_adicional * margen_accesorio   (margen_accesorio = 1: se cobra al costo)
-     costo_total        = costo_base + uso_maquina + accesorio_adicional
+     costo_total        = costo_base + accesorio_adicional
      ganancia_neta      = total_a_cobrar - costo_total
-   El "uso de máquina" es un monto final: NO entra en costo_base, ni en el margen de error, ni se multiplica por el
-   margen de ganancia (se suma al total tal cual, igual que el accesorio a margen 1).
+   El "uso de máquina" NO es un costo: es un recargo por el tiempo de máquina ocupada que se suma al precio tal cual.
+   No entra en costo_base, ni en el margen de error, ni se multiplica por el margen de ganancia, ni en costo_total:
+   es plata extra que compensa el tiempo muerto, así que cuenta completa como ganancia.
    El "accesorio adicional" NO entra en costo_base ni en el margen de error:
    se suma aparte (es guita que sale del bolsillo tal cual, ej. un herraje comprado
    para esa pieza puntual). Por defecto se cobra al costo (margen_accesorio = 1);
@@ -4297,11 +4291,12 @@
     const costoElectricidad = ((potenciaW * horasUso) / 1000) * costoElectricidadKwh;
     const desgasteMaquina = (costoReposicion / vidaUtilHoras) * horasUso;
     const usoMaquina = valorHora * horasUso;
-    // El uso de máquina es un monto final: va aparte del costo base, sin margen de error ni margen de ganancia.
+    // El uso de máquina no es un costo: es un recargo por el tiempo de máquina que se suma al precio tal cual
+    // (sin margen de error ni de ganancia) y que cuenta entero como ganancia.
     const margenErrorMonto = margenErrorPct * (costoMaterial + costoElectricidad + desgasteMaquina + acabados);
     const costoBase = costoMaterial + costoElectricidad + desgasteMaquina + acabados + margenErrorMonto;
     const accesorioCobrado = accesorio * margenAccesorio;
-    const costoTotal = costoBase + usoMaquina + accesorio;
+    const costoTotal = costoBase + accesorio;
     const totalACobrar = costoBase * margenGanancia + usoMaquina + accesorioCobrado;
     const gananciaNeta = totalACobrar - costoTotal;
     const gananciaPct = totalACobrar > 0 ? (gananciaNeta / totalACobrar) * 100 : 0;
@@ -4340,17 +4335,17 @@
     html += calcLinea("Margen de error", "+" + Math.round(r.margenErrorPct * 100) + "% sobre costos", r.margenErrorMonto, "+");
     if (r.acabados) html += calcLinea("Insumos extra / acabado", null, r.acabados, "+");
     html += '<div class="calc-line-total"><div>Costo base</div><div>' + fmtMoney(r.costoBase) + "</div></div>";
-    if (r.valorHora > 0) html += calcLinea("Uso de máquina", fmtMoney(r.valorHora) + "/h × " + fmtNum(r.horasUso, 2) + " h · se suma tal cual, sin margen", r.usoMaquina, "+");
     if (r.accesorio) {
       const subAcc = r.margenAccesorio > 1
         ? "costo " + fmtMoney(r.accesorio) + " · lo cobrás a " + fmtMoney(r.accesorioCobrado) + " (margen " + r.margenAccesorio + "x)"
         : "se cobra al costo, sin ganancia";
       html += calcLinea("Accesorio adicional", subAcc, r.accesorio, "+");
     }
-    if (r.accesorio || r.usoMaquina > 0) {
-      const conQue = r.accesorio && r.usoMaquina > 0 ? "con uso de máquina y accesorio" : r.accesorio ? "con accesorio" : "con uso de máquina";
-      html += '<div class="calc-line-total"><div>Costo total (' + conQue + ")</div><div>" + fmtMoney(r.costoTotal) + "</div></div>";
+    if (r.accesorio) {
+      html += '<div class="calc-line-total"><div>Costo total (con accesorio)</div><div>' + fmtMoney(r.costoTotal) + "</div></div>";
     }
+    // El uso de máquina va después del costo: no es costo, es plata extra por el tiempo de máquina ocupada.
+    if (r.valorHora > 0) html += calcLinea("Uso de máquina (recargo por tiempo)", fmtMoney(r.valorHora) + "/h × " + fmtNum(r.horasUso, 2) + " h · se suma al precio, no es costo ni lleva margen", r.usoMaquina, "+");
     html +=
       '<div class="calc-line-final"><div>Total a cobrar <span class="tag">margen ' +
       r.margenGanancia + "x</span></div><div>" + fmtMoney(r.totalACobrar) + "</div></div>";
@@ -4570,7 +4565,7 @@
         costo_electricidad: r.costoElectricidad,
         desgaste_maquina: r.desgasteMaquina,
         costo_uso_maquina: r.usoMaquina,
-        uso_maquina_aparte: true, // el uso de máquina NO está dentro de costo_base (va aparte, sin margen)
+        uso_maquina_aparte: true, // el uso de máquina NO está dentro de costo_base ni de costo_total (es un recargo al precio, no un costo)
         margen_error_monto: r.margenErrorMonto,
         costo_base: r.costoBase,
         costo_total: r.costoTotal,
