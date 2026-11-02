@@ -367,9 +367,27 @@
      Un pedido cuenta como cobrado salvo que diga expresamente lo contrario: si la columna todavía no existe en la base,
      todo cuenta como pagado (igual que antes de esta mejora). */
   const esPagado = (p) => !p || p.pagado !== false;
+  /* Seña (columna `sena`: supabase/migracion_sena.sql): lo que el cliente ya depositó de un pedido que todavía no está
+     pagado del todo. Un pedido tiene tres estados de cobro: pagado, señado (algo depositado) o pendiente (nada).
+     Lo cobrado de un pedido es su total si está pagado, la seña si está señado y 0 si está pendiente o cancelado. */
+  const senaDe = (p) => {
+    if (!p || esPagado(p)) return 0;
+    const v = Number(p.sena);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  };
+  const estadoCobro = (p) => (esPagado(p) ? "pagado" : senaDe(p) > 0 ? "senado" : "pendiente");
+  const cobradoDe = (p) => {
+    if (!p || p.estado === "cancelado") return 0;
+    if (esPagado(p)) return num(p.subtotal);
+    const total = num(p.subtotal);
+    const s = senaDe(p);
+    return total > 0 ? Math.min(s, total) : s;
+  };
   // null = todavía no se sabe (no hay pedidos para mirar); true / false = las columnas nuevas existen / no existen en la base
   let colsPedidoNuevas = null;
+  let colSena = null; // lo mismo, para la columna `sena`
   const SQL_PAGO = "supabase/migracion_pago_plazo_valorhora.sql";
+  const SQL_SENA = "supabase/migracion_sena.sql";
   const VALOR_HORA_DEFECTO = 90; // $U por hora de máquina en uso, si la máquina todavía no tiene uno propio
   const PLAZO_PRONTO = 3; // "vence pronto": hoy y los 3 días siguientes
   const PLAZO_FILTROS = ["todos", "pronto", "vencidos", "con", "sin"];
@@ -402,7 +420,11 @@
       return false;
     }
     pedidosCache = (r.data || []).map(prepPedido);
-    if (pedidosCache.length) colsPedidoNuevas = "pagado" in pedidosCache[0] && "plazo_entrega" in pedidosCache[0];
+    if (pedidosCache.length) {
+      colsPedidoNuevas = "pagado" in pedidosCache[0] && "plazo_entrega" in pedidosCache[0];
+      colSena = "sena" in pedidosCache[0];
+      sincronizarCobroVenta();
+    }
     pedidosEstado = { ok: true, error: "", truncado: r.truncado, intento: true, hayDatos: true };
     return true;
   }
@@ -1005,10 +1027,13 @@
     const ingresos = suma(ok, (p) => p.subtotal);
     const entregados = suma(ok.filter((p) => p.estado === "entregado"), (p) => p.subtotal);
     // Caja: solo cuenta lo que ya se cobró. Lo que está con pago pendiente se ve aparte, como "por cobrar".
-    const okPagados = ok.filter(esPagado);
-    const cobrado = suma(okPagados, (p) => p.subtotal);
+    // Un pedido señado suma a la caja lo que ya depositó el cliente; el resto queda "por cobrar".
+    const noPagados = ok.filter((p) => !esPagado(p));
+    const cobrado = suma(ok, cobradoDe);
     const porCobrar = ingresos - cobrado;
-    const nPorCobrar = ok.length - okPagados.length;
+    const nPorCobrar = noPagados.length;
+    const senado = noPagados.filter((p) => senaDe(p) > 0);
+    const totalSenas = suma(senado, cobradoDe);
     const gastosPeriodo = gastosAll.filter((g) => g._f >= a && g._f <= b);
     const inversion = gastosPeriodo.filter(esInversion); // aparte: no cuenta en caja ni en ganancia
     const gastos = gastosPeriodo.filter((g) => !esInversion(g));
@@ -1036,6 +1061,8 @@
       cobrado: cobrado,
       porCobrar: porCobrar,
       nPorCobrar: nPorCobrar,
+      nSenados: senado.length,
+      totalSenas: totalSenas,
       gastos: gastos,
       inversion: inversion,
       totalInversion: totalInversion,
@@ -1307,7 +1334,8 @@
         cur.cobrado > 0
           ? (cur.saldo >= 0 ? "Queda el " + Math.round(cur.margen) + "% de lo cobrado" : "Los gastos superan a lo cobrado")
           : cur.ingresos > 0 ? "Todavía no cobraste nada en el período" : "Sin ingresos en el período",
-        cur.nPorCobrar > 0 ? "Por cobrar: " + fmtMoney(cur.porCobrar) + " (" + cur.nPorCobrar + (cur.nPorCobrar === 1 ? " pedido" : " pedidos") + " con pago pendiente)" : "",
+        cur.nPorCobrar > 0 ? "Por cobrar: " + fmtMoney(cur.porCobrar) + " (" + cur.nPorCobrar + (cur.nPorCobrar === 1 ? " pedido" : " pedidos") + " con saldo pendiente)" : "",
+        cur.nSenados > 0 ? "Incluye señas por " + fmtMoney(cur.totalSenas) + " (" + cur.nSenados + (cur.nSenados === 1 ? " pedido señado" : " pedidos señados") + ")" : "",
       ]);
     } else {
       kSal = kpiHtml("Saldo de caja", guion, "", ["Falta cargar datos"]);
@@ -1461,7 +1489,7 @@
       notas.push({ warn: false, html: "En " + cur.pedEstimado + (cur.pedEstimado === 1 ? " pedido" : " pedidos") + " se usó el costo actual del producto, porque no quedó guardado al vender." });
     }
     if (cur.nPorCobrar > 0) {
-      notas.push({ warn: false, html: "Hay " + fmtMoney(cur.porCobrar) + " con pago pendiente (" + cur.nPorCobrar + (cur.nPorCobrar === 1 ? " pedido" : " pedidos") + "): la ganancia cuenta esas ventas, pero el saldo de caja solo suma lo cobrado." });
+      notas.push({ warn: false, html: "Hay " + fmtMoney(cur.porCobrar) + " por cobrar (" + cur.nPorCobrar + (cur.nPorCobrar === 1 ? " pedido" : " pedidos") + " con saldo pendiente): la ganancia cuenta esas ventas, pero el saldo de caja solo suma lo cobrado" + (cur.nSenados > 0 ? " (las señas incluidas)" : "") + "." });
     }
     if (cur.totalInversion > 0) {
       notas.push({ warn: false, html: "Inversión inicial del período (" + fmtMoney(cur.totalInversion) + ") no se resta de la ganancia ni de la caja: se ve aparte." });
@@ -1579,6 +1607,7 @@
   const elFiltroPlazo = document.getElementById("pedidos-filtro-plazo");
   const elPlazosAviso = document.getElementById("pedidos-plazos");
   const elPedidosSql = document.getElementById("pedidos-sql");
+  const SQL_BANNER_PAGO = elPedidosSql.innerHTML;
   const elPedidosTbody = document.getElementById("pedidos-tbody");
   const elPedidosMsg = document.getElementById("pedidos-msg");
   let msgTimer = null;
@@ -1690,8 +1719,14 @@
       if (canalFiltro !== "todos" && p.canal !== canalFiltro) return false;
       if (!ffEnRango(rango, p._dia)) return false;
       // Un pedido cancelado no debe nada: no entra ni en "pago pendiente" ni en "pagados".
-      if (pagoFiltro === "pendientes" && (esPagado(p) || p.estado === "cancelado")) return false;
-      if (pagoFiltro === "pagados" && (!esPagado(p) || p.estado === "cancelado")) return false;
+      if (pagoFiltro !== "todos") {
+        if (p.estado === "cancelado") return false;
+        const ec = estadoCobro(p);
+        if (pagoFiltro === "pendientes" && ec !== "pendiente") return false; // nada cobrado todavía
+        if (pagoFiltro === "senados" && ec !== "senado") return false;
+        if (pagoFiltro === "saldo" && ec === "pagado") return false; // pendientes + señados: lo que falta cobrar
+        if (pagoFiltro === "pagados" && ec !== "pagado") return false;
+      }
       if (plazoFiltro !== "todos") {
         const pe = plazoEstado(p, hoy);
         if (plazoFiltro === "sin" && p._plazo) return false;
@@ -1703,15 +1738,92 @@
       return true;
     });
   }
+  // Orden de la lista (flechitas en los encabezados, como en un Excel): clic = ascendente, otro clic = descendente, otro clic = orden normal.
+  // null = el orden de siempre (lo más reciente primero).
+  let pedidosOrden = null; // { clave: "fecha" | "cliente" | "subtotal" | "plazo" | "estado", dir: "asc" | "desc" }
+  const ORDEN_TXT = {
+    fecha: { asc: "fecha (más antiguos primero)", desc: "fecha (más recientes primero)" },
+    cliente: { asc: "cliente (A a Z)", desc: "cliente (Z a A)" },
+    subtotal: { asc: "subtotal (menor a mayor)", desc: "subtotal (mayor a menor)" },
+    plazo: { asc: "plazo de entrega (el que vence primero)", desc: "plazo de entrega (el que vence último)" },
+    estado: { asc: "estado (nuevos primero)", desc: "estado (entregados primero)" },
+  };
+  function tsPedido(p) {
+    const t = Date.parse(p.created_at);
+    return Number.isFinite(t) ? t : 0;
+  }
+  function ordenarPedidos(lista, orden) {
+    const sg = orden.dir === "desc" ? -1 : 1;
+    const cmpNum = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+    let cmp;
+    if (orden.clave === "fecha") cmp = (a, b) => sg * cmpNum(tsPedido(a), tsPedido(b));
+    else if (orden.clave === "subtotal") cmp = (a, b) => sg * cmpNum(num(a.subtotal), num(b.subtotal));
+    else if (orden.clave === "cliente") {
+      cmp = (a, b) => {
+        const x = String(a.cliente_nombre || "").trim(), y = String(b.cliente_nombre || "").trim();
+        if (!x || !y) return x === y ? 0 : !x ? 1 : -1; // sin nombre, al final en los dos sentidos
+        return sg * x.localeCompare(y, "es", { sensitivity: "base", numeric: true });
+      };
+    } else if (orden.clave === "estado") {
+      const pos = (p) => { const i = ESTADOS.indexOf(p.estado); return i < 0 ? 99 : i; };
+      cmp = (a, b) => {
+        const x = pos(a), y = pos(b);
+        if (x === 99 || y === 99) return x === y ? 0 : x === 99 ? 1 : -1; // estado raro, al final en los dos sentidos
+        return sg * cmpNum(x, y);
+      };
+    } else if (orden.clave === "plazo") {
+      // Primero los pedidos activos con plazo (por fecha), después los ya cerrados (entregados / cancelados) con plazo, y los que no tienen plazo siempre al final.
+      const rango = (p) => (!p._plazo ? 2 : p.estado === "entregado" || p.estado === "cancelado" ? 1 : 0);
+      cmp = (a, b) => {
+        const x = rango(a), y = rango(b);
+        if (x !== y) return cmpNum(x, y);
+        if (x === 2) return 0;
+        return sg * cmpNum(a._plazo, b._plazo);
+      };
+    } else return lista;
+    return lista.map((p, i) => ({ p: p, i: i })).sort((a, b) => cmp(a.p, b.p) || a.i - b.i).map((x) => x.p); // estable: los iguales mantienen el orden de siempre
+  }
   // Lo que se ve en la lista (y lo que baja el Excel).
   function pedidosVisibles(base) {
     const estadoFiltro = elFiltroEstado.value;
     const g = pedidosGrupo;
-    const lista = (base || pedidosBase()).filter((p) => (g === "todos" || grupoDe(p.estado) === g) && (estadoFiltro === "todos" || p.estado === estadoFiltro));
+    let lista = (base || pedidosBase()).filter((p) => (g === "todos" || grupoDe(p.estado) === g) && (estadoFiltro === "todos" || p.estado === estadoFiltro));
+    if (pedidosOrden) return ordenarPedidos(lista, pedidosOrden); // el orden que elegiste con las flechitas manda
     // Mirando plazos, lo que vence antes va primero.
     if (["pronto", "vencidos", "con"].indexOf(elFiltroPlazo.value) >= 0) lista.sort((a, b) => (a._plazo < b._plazo ? -1 : a._plazo > b._plazo ? 1 : 0));
     return lista;
   }
+  // Pinta las flechitas de los encabezados (aria-sort) y el selector de orden del celular.
+  function actualizarEncabezadosOrden() {
+    document.querySelectorAll("#panel-pedidos th[data-sort-th]").forEach((th) => {
+      const activo = pedidosOrden && pedidosOrden.clave === th.dataset.sortTh;
+      th.setAttribute("aria-sort", activo ? (pedidosOrden.dir === "desc" ? "descending" : "ascending") : "none");
+      const b = th.querySelector(".th-sort");
+      if (b) b.setAttribute("aria-label", "Ordenar por " + b.textContent.replace(/[▲▼]/g, "").trim().toLowerCase() + (activo ? ": ahora " + (pedidosOrden.dir === "desc" ? "de mayor a menor" : "de menor a mayor") : ""));
+    });
+    const sel = document.getElementById("pedidos-orden");
+    if (sel) sel.value = pedidosOrden ? pedidosOrden.clave + ":" + pedidosOrden.dir : "";
+  }
+  function fijarOrdenPedidos(orden) {
+    pedidosOrden = orden;
+    pedidosSucio = false;
+    renderPedidos();
+  }
+  document.querySelector("#panel-pedidos thead").addEventListener("click", (e) => {
+    const b = e.target.closest(".th-sort");
+    if (!b) return;
+    const clave = b.dataset.sort;
+    if (!pedidosOrden || pedidosOrden.clave !== clave) fijarOrdenPedidos({ clave: clave, dir: "asc" });
+    else if (pedidosOrden.dir === "asc") fijarOrdenPedidos({ clave: clave, dir: "desc" });
+    else fijarOrdenPedidos(null);
+    const nuevo = document.querySelector('#panel-pedidos .th-sort[data-sort="' + clave + '"]');
+    if (nuevo) nuevo.focus({ preventScroll: true });
+  });
+  document.getElementById("pedidos-orden").addEventListener("change", (e) => {
+    const v = String(e.target.value || "");
+    const [clave, dir] = v.split(":");
+    fijarOrdenPedidos(clave && ORDEN_TXT[clave] ? { clave: clave, dir: dir === "desc" ? "desc" : "asc" } : null);
+  });
 
   // Aviso de arriba: pedidos activos con el plazo vencido o que vencen hoy (de todos los pedidos, sin importar los filtros).
   function actualizarAvisoPlazos() {
@@ -1723,7 +1835,10 @@
       if (pe.tipo === "vencido") vencidos++;
       else if (pe.tipo === "hoy") hoyN++;
     });
-    elPedidosSql.hidden = colsPedidoNuevas !== false;
+    // Aviso de SQL: falta el del pago y el plazo, o (si ese está) el de la seña.
+    if (colsPedidoNuevas === false) { elPedidosSql.innerHTML = SQL_BANNER_PAGO; elPedidosSql.hidden = false; }
+    else if (colSena === false) { elPedidosSql.innerHTML = 'Para cargar <strong>señas</strong> (Señado con el monto depositado) falta correr <strong>' + SQL_SENA + "</strong> en Supabase. Mientras tanto podés usar Pagado y Pago pendiente."; elPedidosSql.hidden = false; }
+    else elPedidosSql.hidden = true;
     if (!vencidos && !hoyN) { elPlazosAviso.hidden = true; elPlazosAviso.innerHTML = ""; return; }
     const partes = [];
     if (vencidos) partes.push("<strong>" + vencidos + (vencidos === 1 ? " pedido con el plazo vencido" : " pedidos con el plazo vencido") + "</strong>");
@@ -1740,6 +1855,7 @@
     ffPedidos.reiniciar();
     setGrupoPedidos("activos");
     elFiltroPlazo.value = "pronto";
+    pedidosOrden = null; // los urgentes se ven por plazo, el que vence primero arriba
     pedidosSucio = false;
     renderPedidos();
   });
@@ -1751,15 +1867,41 @@
     });
   }
 
-  // Botón de pago de cada pedido (no se muestra en cancelados, ni mientras las columnas nuevas no existan en la base).
+  // Botón de cobro de cada pedido (no se muestra en cancelados, ni mientras las columnas nuevas no existan en la base).
+  // Al tocarlo se abre un panelcito con las tres opciones: Pagado / Señado (con el monto depositado) / Pago pendiente.
+  let pagoAbierto = null; // id del pedido que tiene abierto el panel de cobro
   function pagoChipHtml(p) {
     if (p.estado === "cancelado" || colsPedidoNuevas === false) return "";
-    const ok = esPagado(p);
+    const ec = estadoCobro(p);
     const quien = p.cliente_nombre || "este cliente";
+    const id = escAttr(p.id);
+    const abierto = pagoAbierto !== null && String(pagoAbierto) === String(p.id);
+    const total = num(p.subtotal);
+    const sena = senaDe(p);
+    const texto = ec === "pagado" ? "✓ Pagado" : ec === "senado" ? "Señado · " + fmtMoney(sena) : "Pago pendiente";
+    const estadoLbl = ec === "pagado" ? "Pagado" : ec === "senado" ? "Señado, depositó " + fmtMoney(sena) : "Pago pendiente";
+    let h =
+      '<button type="button" class="pago-chip ' + (ec === "pagado" ? "ok" : ec === "senado" ? "sena" : "pend") + '" data-act="toggle-pago" data-id="' + id + '" aria-expanded="' + (abierto ? "true" : "false") +
+      '" aria-controls="pago-panel-' + id + '" aria-label="' + escAttr(estadoLbl + ". Tocá para cambiar el cobro del pedido de " + quien) + '">' + escHtml(texto) + "</button>";
+    if (ec === "senado" && total > sena) h += '<span class="pago-falta">faltan ' + fmtMoney(total - sena) + "</span>";
+    if (abierto) h += pagoPanelHtml(p, ec);
+    return h;
+  }
+  function pagoPanelHtml(p, ec) {
+    const id = escAttr(p.id);
+    const sinSena = colSena === false;
+    const opt = (v, lbl, extra) =>
+      '<label class="pago-opt"><input type="radio" name="pago-modo-' + id + '" value="' + v + '"' + (ec === v ? " checked" : "") + (extra || "") + "> " + lbl + "</label>";
     return (
-      '<button type="button" class="pago-chip ' + (ok ? "ok" : "pend") + '" data-act="toggle-pago" data-id="' + escAttr(p.id) + '" aria-pressed="' + (ok ? "true" : "false") + '" ' +
-      'aria-label="' + escAttr((ok ? "Pagado. Tocá para marcar el pedido de " + quien + " como pago pendiente" : "Pago pendiente. Tocá para marcar el pedido de " + quien + " como pagado")) + '">' +
-      (ok ? "✓ Pagado" : "Pago pendiente") + "</button>"
+      '<span class="pago-panel" id="pago-panel-' + id + '" role="group" aria-label="Cobro del pedido de ' + escAttr(p.cliente_nombre || "este cliente") + '" data-id="' + id + '">' +
+      '<span class="pago-opts">' + opt("pagado", "Pagado") + opt("senado", "Señado", sinSena ? " disabled" : "") + opt("pendiente", "Pago pendiente") + "</span>" +
+      (sinSena ? '<span class="pago-nota">Para cargar señas falta correr <strong>' + SQL_SENA + "</strong> en Supabase.</span>" : "") +
+      '<span class="pago-monto-wrap"' + (ec === "senado" ? "" : " hidden") + '><label for="pago-monto-' + id + '">Monto que te depositaron ($U)</label>' +
+      '<input type="number" class="pago-monto" id="pago-monto-' + id + '" min="0" step="any" inputmode="decimal" placeholder="Ej: 500" value="' + (ec === "senado" ? escAttr(String(senaDe(p))) : "") + '">' +
+      '<span class="pago-total">Total del pedido: ' + fmtMoney(num(p.subtotal)) + "</span></span>" +
+      '<span class="pago-err" role="alert"></span>' +
+      '<span class="pago-btns"><button type="button" class="btn btn-small" data-act="guardar-pago" data-id="' + id + '">Guardar</button>' +
+      '<button type="button" class="btn-secondary btn-small" data-act="cerrar-pago" data-id="' + id + '">Cancelar</button></span></span>'
     );
   }
   function subtotalCeldaHtml(p) {
@@ -1779,7 +1921,9 @@
     document.getElementById("pedidos-empty").style.display = list.length ? "none" : "block";
     document.getElementById("pedidos-count").textContent =
       (pedidosEstado.hayDatos ? "Mostrando " + list.length + " de " + pedidosCache.length + (pedidosCache.length === 1 ? " pedido" : " pedidos") : "") +
+      (pedidosEstado.hayDatos && pedidosOrden ? " · ordenado por " + ORDEN_TXT[pedidosOrden.clave][pedidosOrden.dir] : "") +
       (pedidosEstado.truncado ? " · hay más pedidos viejos que no se cargaron" : "");
+    actualizarEncabezadosOrden();
 
     elPedidosTbody.innerHTML = list
       .map((p) => {
@@ -1807,7 +1951,14 @@
   function detallePagoPlazo(p) {
     if (colsPedidoNuevas === false) return "";
     let h = "";
-    if (p.estado !== "cancelado") h += "<br><strong>Cobro:</strong> " + (esPagado(p) ? "pagado" : '<span class="gp-neg">pago pendiente</span> (no suma al saldo de caja)');
+    if (p.estado !== "cancelado") {
+      const ec = estadoCobro(p);
+      h += "<br><strong>Cobro:</strong> " + (
+        ec === "pagado" ? "pagado"
+          : ec === "senado" ? "señado: depositó " + fmtMoney(senaDe(p)) + " de " + fmtMoney(p.subtotal) + " (faltan " + fmtMoney(Math.max(num(p.subtotal) - senaDe(p), 0)) + "; la seña ya suma al saldo de caja)"
+          : '<span class="gp-neg">pago pendiente</span> (no suma al saldo de caja)'
+      );
+    }
     const pe = plazoEstado(p, todayStr());
     h += "<br><strong>Plazo de entrega:</strong> " + (pe ? (pe.tipo === "vencido" ? '<span class="gp-neg">' + escHtml(pe.largo) + "</span>" : escHtml(pe.largo)) : "sin plazo");
     return h;
@@ -1877,13 +2028,13 @@
   elPedidosTbody.addEventListener("click", (e) => {
     if (e.target.closest("select, a, input")) return;
     const accion = e.target.closest("button[data-act]");
+    if (!accion && e.target.closest(".pago-panel")) return; // un clic en el texto del panel de cobro no abre el detalle
     if (accion) {
       if (accion.dataset.act === "editar-pedido") abrirEdicionPedido(accion.dataset.id);
       else if (accion.dataset.act === "eliminar-pedido") eliminarPedido(accion.dataset.id);
-      else if (accion.dataset.act === "toggle-pago") {
-        const p = pedidosCache.find((x) => String(x.id) === String(accion.dataset.id));
-        if (p) cambiarPago(p.id, !esPagado(p), accion);
-      }
+      else if (accion.dataset.act === "toggle-pago") abrirCerrarPanelPago(accion.dataset.id);
+      else if (accion.dataset.act === "guardar-pago") guardarPanelPago(accion.dataset.id, accion);
+      else if (accion.dataset.act === "cerrar-pago") cerrarPanelPago(accion.dataset.id, true);
       return;
     }
     const tr = e.target.closest("tr[data-pedido-id]");
@@ -1891,7 +2042,22 @@
   });
   elPedidosTbody.addEventListener("change", (e) => {
     const sel = e.target.closest("select.estado-select");
-    if (sel) cambiarEstado(sel.dataset.id, sel.value, sel);
+    if (sel) { cambiarEstado(sel.dataset.id, sel.value, sel); return; }
+    const rad = e.target.closest(".pago-panel input[type=radio]");
+    if (rad) {
+      // Solo "Señado" pide el monto
+      const panel = rad.closest(".pago-panel");
+      const wrap = panel.querySelector(".pago-monto-wrap");
+      wrap.hidden = rad.value !== "senado";
+      panel.querySelector(".pago-err").textContent = "";
+      if (rad.value === "senado") panel.querySelector(".pago-monto").focus({ preventScroll: true });
+    }
+  });
+  elPedidosTbody.addEventListener("keydown", (e) => {
+    const panel = e.target.closest(".pago-panel");
+    if (!panel) return;
+    if (e.key === "Escape") { e.preventDefault(); cerrarPanelPago(panel.dataset.id, true); }
+    else if (e.key === "Enter" && e.target.matches("input.pago-monto")) { e.preventDefault(); guardarPanelPago(panel.dataset.id, panel.querySelector('[data-act="guardar-pago"]')); }
   });
 
   async function cambiarEstado(id, nuevoEstado, sel) {
@@ -1953,39 +2119,132 @@
     return null;
   }
 
-  // Marca un pedido como pagado o con pago pendiente. El saldo de caja del Dashboard cambia en el acto.
-  async function cambiarPago(id, pagado, btn) {
-    const p = pedidosCache.find((x) => String(x.id) === String(id));
+  function panelPago(id) {
+    return elPedidosTbody.querySelector('.pago-panel[data-id="' + String(id).replace(/["\\]/g, "\\$&") + '"]');
+  }
+  function pedidoPorId(id) {
+    return pedidosCache.find((x) => String(x.id) === String(id));
+  }
+  // Abre (o cierra) el panel de cobro de un pedido; solo uno a la vez.
+  // Esc también cierra el panel si el foco quedó suelto (por ejemplo después de tocar un texto del panel)
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || pagoAbierto === null) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && !elPedidosTbody.contains(a)) return;
+    cerrarPanelPago(pagoAbierto, true);
+  });
+  function abrirCerrarPanelPago(id) {
+    const antes = pagoAbierto;
+    pagoAbierto = antes !== null && String(antes) === String(id) ? null : String(id);
+    [antes, pagoAbierto].forEach((x) => {
+      const p = x === null ? null : pedidoPorId(x);
+      if (p) refrescarFilaPedido(p);
+    });
+    if (pagoAbierto !== null) {
+      const panel = panelPago(pagoAbierto);
+      const marcado = panel && panel.querySelector("input[type=radio]:checked");
+      if (marcado) marcado.focus({ preventScroll: true });
+    } else {
+      const p = pedidoPorId(id);
+      const fila = p && refrescarFilaPedido(p);
+      const chip = fila && fila.querySelector(".pago-chip");
+      if (chip) chip.focus({ preventScroll: true });
+    }
+  }
+  function cerrarPanelPago(id, enfocar) {
+    pagoAbierto = null;
+    const p = pedidoPorId(id);
+    const fila = p && refrescarFilaPedido(p);
+    const chip = enfocar && fila && fila.querySelector(".pago-chip");
+    if (chip) chip.focus({ preventScroll: true });
+  }
+  // Lee lo que eligió en el panel, lo valida y lo manda a guardar.
+  function guardarPanelPago(id, btn) {
+    const panel = panelPago(id);
+    const p = pedidoPorId(id);
+    if (!panel || !p) return;
+    const marcado = panel.querySelector("input[type=radio]:checked");
+    const errEl = panel.querySelector(".pago-err");
+    errEl.textContent = "";
+    if (!marcado) { errEl.textContent = "Elegí una opción."; return; }
+    const modo = marcado.value;
+    let monto = 0;
+    if (modo === "senado") {
+      const inp = panel.querySelector(".pago-monto");
+      const raw = String(inp.value).trim();
+      monto = Math.round(Number(raw.replace(",", ".")) * 100) / 100;
+      const total = num(p.subtotal);
+      if (!raw || !Number.isFinite(monto) || monto <= 0) { errEl.textContent = "Poné cuánto te depositaron (un monto mayor a 0)."; inp.focus(); return; }
+      if (total > 0 && monto >= total) { errEl.textContent = "La seña tiene que ser menor al total del pedido (" + fmtMoney(total) + "). Si ya pagó todo, elegí Pagado."; inp.focus(); return; }
+      if (monto > 1000000000) { errEl.textContent = "Ese monto es demasiado grande."; inp.focus(); return; }
+    }
+    if (modo === estadoCobro(p) && (modo !== "senado" || monto === senaDe(p))) { cerrarPanelPago(id, true); return; } // no cambió nada
+    cambiarPago(id, modo, monto, btn);
+  }
+
+  // Cambia el cobro de un pedido (pagado / señado / pendiente). El saldo de caja del Dashboard cambia en el acto.
+  async function cambiarPago(id, modo, monto, btn) {
+    const p = pedidoPorId(id);
     if (!p) return;
     const quien = p.cliente_nombre || "este cliente";
-    const previo = esPagado(p);
-    if (btn) btn.disabled = true;
-    const volver = (texto) => {
-      if (btn) btn.disabled = false;
-      mostrarMsgPedidos("err", texto + " El pedido de " + quien + " quedó como estaba (" + (previo ? "pagado" : "pago pendiente") + ").");
+    const previo = estadoCobro(p);
+    const previoTxt = previo === "pagado" ? "pagado" : previo === "senado" ? "señado por " + fmtMoney(senaDe(p)) : "pago pendiente";
+    const panel = btn ? btn.closest(".pago-panel") : null;
+    const errEl = panel ? panel.querySelector(".pago-err") : null;
+    const bloquear = (si) => {
+      if (!panel) return;
+      panel.querySelectorAll("button, input").forEach((x) => { x.disabled = si; });
+      if (!si && colSena === false) { const r = panel.querySelector('input[value="senado"]'); if (r) r.disabled = true; }
     };
-    let res;
-    try {
-      res = await stratoSb.from("pedidos").update({ pagado: pagado }).eq("id", id).select("id");
-    } catch (e) {
-      volver("No se pudo guardar el cambio de pago (" + (e && e.message ? e.message : "error de conexión") + ").");
-      return;
+    const volver = (texto) => {
+      bloquear(false);
+      const msg = texto + " El pedido de " + quien + " quedó como estaba (" + previoTxt + ").";
+      if (errEl) errEl.textContent = msg;
+      else mostrarMsgPedidos("err", msg);
+    };
+    if (modo === "senado" && colSena === false) { volver("Para cargar señas falta correr " + SQL_SENA + " en Supabase (agrega la columna de la seña)."); return; }
+    bloquear(true);
+    const patch = { pagado: modo === "pagado" };
+    if (modo === "senado") patch.sena = monto;
+    else if (colSena !== false) patch.sena = 0; // pagado o pendiente: no queda ninguna seña a medias
+    const intentar = async (pl) => {
+      try {
+        return await stratoSb.from("pedidos").update(pl).eq("id", id).select("id");
+      } catch (e) {
+        return { error: { message: e && e.message ? e.message : "error de conexión", red: true }, data: null };
+      }
+    };
+    let res = await intentar(patch);
+    if (res.error && !res.error.red && "sena" in patch && /sena/i.test(String(res.error.message || "") + " " + String(res.error.details || "")) &&
+        /column|schema cache|PGRST204|42703/i.test(String(res.error.message || "") + " " + String(res.error.details || "") + " " + String(res.error.code || "")) &&
+        !/check constraint|23514/i.test(String(res.error.message || "") + " " + String(res.error.code || ""))) {
+      // La base todavía no tiene la columna de la seña.
+      colSena = false;
+      if (modo === "senado") {
+        renderPedidos();
+        mostrarMsgPedidos("err", "Todavía falta correr " + SQL_SENA + " en Supabase (agrega la seña). Corrélo y volvé a intentar.");
+        return;
+      }
+      delete patch.sena;
+      res = await intentar(patch);
     }
     if (res.error) {
       const t = String(res.error.message || "") + " " + String(res.error.code || "");
-      if (/pagado|PGRST204/i.test(t)) {
+      if (!res.error.red && /pagado|PGRST204/i.test(t)) {
         colsPedidoNuevas = false;
         renderPedidos();
         mostrarMsgPedidos("err", "Todavía falta correr " + SQL_PAGO + " en Supabase (agrega el pago pendiente y el plazo de entrega). Corrélo y volvé a intentar.");
         return;
       }
-      volver("No se pudo guardar el cambio de pago (" + res.error.message + ").");
+      volver("No se pudo guardar el cambio de cobro (" + res.error.message + ").");
       return;
     }
     if (Array.isArray(res.data) && res.data.length === 0) { volver("El cambio no se guardó (no se encontró el pedido o falta permiso)."); return; }
 
-    p.pagado = pagado;
+    p.pagado = patch.pagado;
+    if ("sena" in patch) { p.sena = patch.sena; colSena = true; }
     colsPedidoNuevas = true;
+    pagoAbierto = null;
     if (msgTipo === "err" || msgTipo === "cambios") ocultarMsgPedidos();
     // Si con el filtro de pago de ahora el pedido ya no corresponde a la lista, se redibuja; si no, se actualiza solo su fila.
     const sigue = pedidosVisibles().some((x) => String(x.id) === String(id));
@@ -1997,7 +2256,12 @@
       if (nuevo) nuevo.focus({ preventScroll: true });
       actualizarChipsPedidos(pedidosBase());
     }
-    mostrarMsgPedidos("ok", "El pedido de " + quien + " (" + fmtMoney(num(p.subtotal)) + ") quedó " + (pagado ? "como pagado: ya suma al saldo de caja." : "con pago pendiente: no suma al saldo de caja hasta que lo marques como pagado."));
+    const total = num(p.subtotal);
+    mostrarMsgPedidos("ok", "El pedido de " + quien + " (" + fmtMoney(total) + ") quedó " + (
+      modo === "pagado" ? "como pagado: ya suma el total al saldo de caja."
+        : modo === "senado" ? "señado por " + fmtMoney(monto) + ": esa seña ya suma al saldo de caja" + (total > monto ? " y faltan " + fmtMoney(total - monto) + " por cobrar." : ".")
+        : "con pago pendiente: no suma al saldo de caja hasta que lo marques como pagado o señado."
+    ));
     renderDashboard();
   }
 
@@ -2047,6 +2311,32 @@
     const e = document.getElementById(id);
     e.addEventListener("input", actualizarAvisoPlazoVenta);
     e.addEventListener("change", actualizarAvisoPlazoVenta);
+  });
+
+  // Cobro de la venta: Pagado / Señado (con el monto depositado) / Pago pendiente.
+  const HINT_COBRO = {
+    pagado: "Pagado: suma el total al saldo de caja.",
+    senado: "Señado: solo el monto depositado suma al saldo de caja; lo que falta queda por cobrar.",
+    pendiente: "Pago pendiente: no suma al saldo de caja hasta que lo marques como pagado o señado.",
+  };
+  function sincronizarCobroVenta() {
+    const sel = document.getElementById("venta-cobro");
+    if (!sel) return;
+    const opSena = sel.querySelector('option[value="senado"]');
+    if (opSena) opSena.disabled = colSena === false;
+    if (colSena === false && sel.value === "senado") sel.value = "pendiente";
+    const modo = sel.value;
+    document.getElementById("venta-sena-wrap").hidden = modo !== "senado";
+    document.getElementById("venta-pagado-hint").textContent = HINT_COBRO[modo] + (colSena === false ? " (Para cargar señas falta correr " + SQL_SENA + " en Supabase.)" : "");
+  }
+  function setCobroVenta(modo, monto) {
+    document.getElementById("venta-cobro").value = modo;
+    document.getElementById("venta-sena").value = modo === "senado" && monto ? String(monto) : "";
+    sincronizarCobroVenta();
+  }
+  document.getElementById("venta-cobro").addEventListener("change", () => {
+    sincronizarCobroVenta();
+    if (document.getElementById("venta-cobro").value === "senado") document.getElementById("venta-sena").focus({ preventScroll: true });
   });
 
   function armarOpcionesVenta() {
@@ -2218,7 +2508,7 @@
     document.getElementById("venta-canal").value = "instagram";
     document.getElementById("venta-plazo").value = "";
     actualizarAvisoPlazoVenta();
-    document.getElementById("venta-pagado").checked = true; // una venta cargada a mano suele estar cobrada; destildalo si falta cobrar
+    setCobroVenta("pagado", 0); // una venta cargada a mano suele estar cobrada; cambialo si falta cobrar
     elVentaError.textContent = "";
     armarOpcionesVenta();
     elVentaItems.innerHTML = "";
@@ -2262,7 +2552,7 @@
     document.getElementById("venta-cliente").value = limpiarTexto(c.cliente || "", 80);
     document.getElementById("venta-estado").value = "confirmado";
     actualizarAvisoPlazoVenta();
-    document.getElementById("venta-pagado").checked = false; // un trabajo por encargar todavía no se cobró
+    setCobroVenta("pendiente", 0); // un trabajo por encargar todavía no se cobró
     const f = filasVenta()[0];
     f.sel.value = "otro";
     f.otro.hidden = false;
@@ -2332,7 +2622,7 @@
     document.getElementById("venta-notas").value = p.notas || "";
     document.getElementById("venta-plazo").value = p._plazo || "";
     actualizarAvisoPlazoVenta();
-    document.getElementById("venta-pagado").checked = esPagado(p);
+    setCobroVenta(estadoCobro(p), senaDe(p));
     document.getElementById("venta-email").value = p.cliente_email || "";
     document.getElementById("venta-direccion").value = p.direccion || "";
 
@@ -2407,9 +2697,10 @@
     if (elFiltroEstado.value !== "todos") partes.push(ESTADO_LABEL[elFiltroEstado.value] || elFiltroEstado.value);
     if (ffPedidos.activo()) partes.push(ffTexto(ffPedidos.rango()));
     if (elFiltroCanal.value !== "todos") partes.push(CANAL_LABEL[elFiltroCanal.value] || elFiltroCanal.value);
-    if (elFiltroPago.value !== "todos") partes.push(elFiltroPago.value === "pendientes" ? "solo pago pendiente" : "solo pagados");
+    if (elFiltroPago.value !== "todos") partes.push({ pendientes: "solo pago pendiente", senados: "solo señados", saldo: "con saldo por cobrar", pagados: "solo pagados" }[elFiltroPago.value] || elFiltroPago.value);
     if (elFiltroPlazo.value !== "todos") partes.push("plazo: " + elFiltroPlazo.options[elFiltroPlazo.selectedIndex].text.toLowerCase());
     if (elBuscar.value.trim()) partes.push("búsqueda «" + elBuscar.value.trim() + "»");
+    if (pedidosOrden) partes.push("ordenado por " + ORDEN_TXT[pedidosOrden.clave][pedidosOrden.dir]);
     return partes.join(" · ");
   }
   document.getElementById("pedidos-excel").addEventListener("click", () => {
@@ -2422,12 +2713,14 @@
         cols: [
           { t: "Fecha", w: 12, tipo: "fecha" }, { t: "Cliente", w: 24 }, { t: "Contacto", w: 18 }, { t: "Canal", w: 14 },
           { t: "Productos", w: 46, ajustar: true }, { t: "Subtotal ($U)", w: 14, tipo: "dinero" }, { t: "Entrega", w: 24 }, { t: "Pago", w: 20 },
-          { t: "Cobro", w: 16 }, { t: "Plazo de entrega", w: 16, tipo: "fecha" },
+          { t: "Cobro", w: 16 }, { t: "Cobrado ($U)", w: 14, tipo: "dinero" }, { t: "Falta cobrar ($U)", w: 16, tipo: "dinero" }, { t: "Plazo de entrega", w: 16, tipo: "fecha" },
           { t: "Estado", w: 15 }, { t: "Email", w: 26 }, { t: "Dirección", w: 28 }, { t: "Notas", w: 30, ajustar: true },
         ],
         filas: list.map((p) => [
           p._dia, p.cliente_nombre, p.cliente_telefono, CANAL_LABEL[p.canal] || p.canal, (p.items || []).map(itemTexto).join("; "), num(p.subtotal),
-          p.entrega, p.pago, p.estado === "cancelado" ? "" : esPagado(p) ? "Pagado" : "Pago pendiente", p._plazo, ESTADO_LABEL[p.estado] || p.estado, p.cliente_email, p.direccion, p.notas,
+          p.entrega, p.pago, p.estado === "cancelado" ? "" : { pagado: "Pagado", senado: "Señado", pendiente: "Pago pendiente" }[estadoCobro(p)],
+          p.estado === "cancelado" ? null : cobradoDe(p), p.estado === "cancelado" ? null : Math.max(num(p.subtotal) - cobradoDe(p), 0),
+          p._plazo, ESTADO_LABEL[p.estado] || p.estado, p.cliente_email, p.direccion, p.notas,
         ]),
       };
       const filasItems = [];
@@ -2494,7 +2787,8 @@
     if (plazo && (!/^\d{4}-\d{2}-\d{2}$/.test(plazo) || plazo < "2020-01-01" || plazo > addDays(todayStr(), 730))) {
       return falla("El plazo de entrega no es una fecha válida (tiene que estar dentro de los próximos 2 años).", document.getElementById("venta-plazo"));
     }
-    const pagado = document.getElementById("venta-pagado").checked;
+    const cobro = document.getElementById("venta-cobro").value;
+    const pagado = cobro === "pagado";
     if (!cliente) return falla("Falta el nombre del cliente.", document.getElementById("venta-cliente"));
 
     const items = [];
@@ -2552,6 +2846,17 @@
     if (!items.length) return falla("Agregá al menos un producto.", null);
     const subtotal = items.reduce((s, it) => s + (it.precio === null || it.precio === undefined ? 0 : it.qty * it.precio), 0);
 
+    let sena = 0;
+    if (cobro === "senado") {
+      const inpSena = document.getElementById("venta-sena");
+      if (colSena === false) return falla("Para cargar señas falta correr " + SQL_SENA + " en Supabase. Mientras tanto elegí Pagado o Pago pendiente.", document.getElementById("venta-cobro"));
+      const raw = String(inpSena.value).trim();
+      sena = Math.round(Number(raw.replace(",", ".")) * 100) / 100;
+      if (!raw || !Number.isFinite(sena) || sena <= 0) return falla("Poné cuánto te depositaron de seña (un monto mayor a 0).", inpSena);
+      if (subtotal > 0 && sena >= subtotal) return falla("La seña tiene que ser menor al total de la venta (" + fmtMoney(subtotal) + "). Si ya pagó todo, elegí Pagado.", inpSena);
+      if (sena > 1000000000) return falla("Ese monto de seña es demasiado grande.", inpSena);
+    }
+
     const editando = ventaEditId !== null;
     const payload = {
       cliente_nombre: cliente,
@@ -2572,6 +2877,7 @@
     if (colsPedidoNuevas !== false || necesitaColsNuevas) {
       payload.pagado = pagado;
       payload.plazo_entrega = plazo || null;
+      if (colSena !== false) payload.sena = sena; // 0 si no es una venta señada
     }
     // Una venta de hoy se guarda con la hora actual (la pone la base); una de un día anterior, al mediodía de ese día en Uruguay.
     // Al editar, la fecha solo se toca si la cambiaste.
@@ -2598,16 +2904,23 @@
     try {
       let r = await guardarPayload(payload);
       // Si la base todavía no tiene las columnas nuevas: sin nada especial que guardar se reintenta sin ellas; si no, se avisa.
-      if (r.error && "pagado" in payload && /pagado|plazo_entrega/i.test(String(r.error.message || "") + " " + String(r.error.details || ""))) {
-        colsPedidoNuevas = false;
-        if (necesitaColsNuevas) {
-          r = { error: { message: "faltan las columnas del pago y el plazo", faltaSql: true }, sinFilas: false };
-        } else {
-          const sin = Object.assign({}, payload);
-          delete sin.pagado;
-          delete sin.plazo_entrega;
-          r = await guardarPayload(sin);
-        }
+      for (let intento = 0; intento < 3 && r.error; intento++) {
+        const t = String(r.error.message || "") + " " + String(r.error.details || "") + " " + String(r.error.code || "");
+        if (/check constraint|23514/i.test(t)) break; // un valor que la base rechaza, no una columna que falta
+        if ("sena" in payload && /sena/i.test(t) && /column|schema cache|PGRST204|42703/i.test(t)) {
+          colSena = false;
+          if (cobro === "senado") { r = { error: { message: "falta la columna de la seña", faltaSql: SQL_SENA }, sinFilas: false }; break; }
+          delete payload.sena;
+          r = await guardarPayload(payload);
+        } else if ("pagado" in payload && /pagado|plazo_entrega/i.test(t)) {
+          colsPedidoNuevas = false;
+          colSena = false;
+          if (necesitaColsNuevas) { r = { error: { message: "faltan las columnas del pago y el plazo", faltaSql: SQL_PAGO }, sinFilas: false }; break; }
+          delete payload.pagado;
+          delete payload.plazo_entrega;
+          delete payload.sena;
+          r = await guardarPayload(payload);
+        } else break;
       }
       error = r.error;
       sinFilas = r.sinFilas;
@@ -2620,7 +2933,8 @@
     if (error) {
       const txt = String(error.message || "") + " " + String(error.code || "");
       if (error.faltaSql) {
-        elVentaError.textContent = "Todavía falta correr " + SQL_PAGO + " en Supabase (agrega el pago pendiente y el plazo de entrega). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
+        elVentaError.textContent = "Todavía falta correr " + error.faltaSql + " en Supabase (agrega " + (error.faltaSql === SQL_SENA ? "la seña" : "el pago pendiente y el plazo de entrega") + "). Corrélo y volvé a guardar: lo que cargaste sigue acá.";
+        sincronizarCobroVenta();
       } else if (/canal|row-level security|permission denied|42501|PGRST204/i.test(txt)) {
         elVentaError.textContent = editando
           ? "No se pudo guardar el cambio: falta un permiso en Supabase. Corré supabase/migracion_monedas_inversion.sql (y supabase/migracion_dashboard.sql si todavía no lo corriste) y volvé a guardar: lo que cambiaste sigue acá."
@@ -2647,6 +2961,7 @@
       elFiltroPago.value = "todos";
       elFiltroPlazo.value = "todos";
       elBuscar.value = "";
+      pedidosOrden = null;
       ffPedidos.reiniciar();
       setGrupoPedidos("todos");
     }
