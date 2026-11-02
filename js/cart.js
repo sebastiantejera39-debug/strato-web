@@ -12,15 +12,16 @@ const STRATO_INSTAGRAM = "storge.lab"; // TODO: usuario real de Instagram (ya co
 const CART_KEY = "strato_cart_v1";
 
 /* ---- Cupones de descuento ----
-   Todavía no hay ningún código cargado — esto deja lista la base (input +
-   cálculo + guardado) para cuando Sebastian quiera sumar cupones reales,
-   sin tener que tocar el HTML/CSS del carrito. Para sumar uno, agregar una
-   línea acá con el código en MAYÚSCULAS, por ejemplo:
-     "BIENVENIDA10": { tipo: "porcentaje", valor: 10 },  // 10% de descuento
-     "1000OFF":      { tipo: "monto", valor: 1000 },     // $U 1000 de descuento
-   Mientras este objeto esté vacío, cualquier código que se escriba va a
-   mostrar "cupón no válido" — es el comportamiento esperado por ahora. */
-const STRATO_CUPONES = {};
+   Cada cupón: código en MAYÚSCULAS -> { tipo: "porcentaje", valor: 1 a 90, desde: "AAAA-MM-DD", hasta: "AAAA-MM-DD" }.
+   `desde` y `hasta` son días de Uruguay, los dos incluidos (se pueden omitir: sin `hasta` no vence).
+   Solo hay descuentos en porcentaje. El cupón se aplica sobre el precio de cada unidad que ya tiene el descuento
+   por cantidad, y se redondea al peso por unidad (igual que el descuento por cantidad).
+   OJO: el que COBRA es el servidor. Hay que copiar el mismo cupón a CUPONES en
+   netlify/functions/create-preference.js (y subir los dos archivos juntos): si no coinciden, Mercado Pago y el
+   pedido guardado rechazan el código. Para apagar un cupón antes de tiempo basta con borrarlo de los dos. */
+const STRATO_CUPONES = {
+  CYBER15: { tipo: "porcentaje", valor: 15, desde: "2026-11-02", hasta: "2026-11-05" }, // Cyber Monday
+};
 
 const CUPON_KEY = "strato_cupon_v1";
 
@@ -106,36 +107,65 @@ function stratoClearCart() {
 }
 
 /* ---- Cupón aplicado (código guardado en localStorage) ---- */
+
+/* Día de hoy en Uruguay (UTC-3 todo el año), AAAA-MM-DD. Igual que el servidor. */
+function stratoHoyUY() {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/* "ok" | "invalido" | "futuro" (todavía no empieza) | "vencido" */
+function stratoCuponEstado(code) {
+  if (!code || !Object.prototype.hasOwnProperty.call(STRATO_CUPONES, code)) return "invalido";
+  const c = STRATO_CUPONES[code];
+  if (!c || c.tipo !== "porcentaje" || !(c.valor > 0 && c.valor <= 90)) return "invalido";
+  const hoy = stratoHoyUY();
+  if (c.desde && hoy < c.desde) return "futuro";
+  if (c.hasta && hoy > c.hasta) return "vencido";
+  return "ok";
+}
+
+/* El código guardado, solo si sigue vigente (un cupón que venció mientras tanto deja de contar solo). */
 function stratoGetCuponCode() {
   try {
-    return localStorage.getItem(CUPON_KEY) || null;
+    const code = localStorage.getItem(CUPON_KEY);
+    return code && stratoCuponEstado(code) === "ok" ? code : null;
   } catch (e) {
     return null;
   }
 }
 
-function stratoCartDescuento() {
+/* Porcentaje del cupón aplicado (0 si no hay). */
+function stratoCuponPct() {
   const code = stratoGetCuponCode();
-  const cupon = code ? STRATO_CUPONES[code] : null;
-  if (!cupon) return 0;
-  const subtotal = stratoCartSubtotal();
-  const monto = cupon.tipo === "porcentaje" ? subtotal * (cupon.valor / 100) : cupon.valor;
-  return Math.min(Math.max(monto, 0), subtotal);
+  return code ? STRATO_CUPONES[code].valor : 0;
 }
 
+/* Precio de UNA unidad con el cupón: sobre el precio que ya trae el descuento por cantidad, redondeado al peso. */
+function stratoCuponUnit(unit, pct) {
+  return Math.max(1, Math.round((unit * (100 - pct)) / 100));
+}
+
+/* Cuánto ahorra el cupón (suma de lo que baja cada unidad por su cantidad). */
+function stratoCartDescuento() {
+  return stratoCartDetailed().reduce((sum, l) => sum + (l.lineTotal == null ? 0 : l.lineTotal - l.lineFinal), 0);
+}
+
+/* Lo que paga el cliente (sin el recargo de Mercado Pago). */
 function stratoCartTotal() {
-  return Math.max(0, stratoCartSubtotal() - stratoCartDescuento());
+  return stratoCartDetailed().reduce((sum, l) => sum + (l.lineFinal || 0), 0);
 }
 
 function stratoAplicarCupon(inputEl) {
   const feedbackEl = document.getElementById("cartCuponFeedback");
   const raw = (inputEl && inputEl.value ? inputEl.value : "").trim().toUpperCase();
   if (!raw) return;
-  if (STRATO_CUPONES[raw]) {
+  const estado = stratoCuponEstado(raw);
+  if (estado === "ok") {
     localStorage.setItem(CUPON_KEY, raw);
     stratoRenderCartDrawer();
   } else if (feedbackEl) {
-    feedbackEl.textContent = "Ese cupón no es válido.";
+    feedbackEl.textContent =
+      estado === "futuro" ? "Ese cupón todavía no está vigente." : estado === "vencido" ? "Ese cupón ya venció." : "Ese cupón no es válido.";
   }
 }
 
@@ -212,6 +242,13 @@ function stratoCartDetailed() {
     l.unit = l.unitBase == null ? null : tier ? Math.round(l.unitBase * (1 - tier.pct / 100)) : l.unitBase;
     l.lineBase = l.unitBase == null ? null : l.unitBase * l.qty;
     l.lineTotal = l.unit == null ? null : l.unit * l.qty;
+  });
+
+  // Cupón: precio por unidad ya con el cupón (igual al que cobra el servidor).
+  const cuponPct = stratoCuponPct();
+  lines.forEach((l) => {
+    l.unitFinal = l.unit == null ? null : cuponPct ? stratoCuponUnit(l.unit, cuponPct) : l.unit;
+    l.lineFinal = l.unitFinal == null ? null : l.unitFinal * l.qty;
   });
   return lines;
 }
@@ -338,6 +375,7 @@ function stratoRenderCartDrawer() {
   const subtotal = stratoCartSubtotal();
   const cuponCode = stratoGetCuponCode();
   const cuponAplicado = cuponCode && STRATO_CUPONES[cuponCode];
+  const cuponTxt = cuponAplicado ? cuponCode + " (-" + cuponAplicado.valor + "%)" : "";
   const descuento = stratoCartDescuento();
   const total = stratoCartTotal();
 
@@ -346,7 +384,7 @@ function stratoRenderCartDrawer() {
       ? '<div class="cart-cupon--applied">' +
         "<span>Cupón <strong>" +
         cuponCode +
-        "</strong> aplicado</span>" +
+        "</strong> aplicado (-" + cuponAplicado.valor + "%)</span>" +
         '<button type="button" onclick="stratoQuitarCupon()">Quitar</button>' +
         "</div>"
       : '<div class="cart-cupon">' +
@@ -370,7 +408,7 @@ function stratoRenderCartDrawer() {
     }
     if (descuento > 0) {
       rowsHtml +=
-        '<div class="cart-drawer__row cart-drawer__row--descuento"><span>Descuento</span><span>-$U ' +
+        '<div class="cart-drawer__row cart-drawer__row--descuento"><span>Cupón ' + cuponTxt + "</span><span>-$U " +
         descuento.toLocaleString("es-UY") +
         "</span></div>";
     }

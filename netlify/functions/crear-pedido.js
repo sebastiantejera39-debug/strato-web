@@ -12,6 +12,11 @@
 // al momento de la venta, así el Dashboard calcula la ganancia aunque después cambies el costo.
 // Si esa tabla todavía no existe o no se puede leer, el pedido se guarda igual, sin costo.
 //
+// Cupones: el navegador manda solo el código; se valida y se calcula acá (create-preference.js: CUPONES). Los
+// precios unitarios que se guardan ya llevan el descuento (así `subtotal` = lo que paga el cliente y el panel
+// no se desacomoda si se edita el pedido), y el ítem deja registro: `precio_antes_cupon`, `descuento_cupon_pct`
+// y `cupon`. Además se agrega una línea al principio de las notas para que se vea en el panel.
+//
 // Una vez probado, se corre supabase/cerrar_pedidos_publicos.sql, que le quita al público la
 // posibilidad de insertar en `pedidos`: desde ahí esta función es la única puerta de entrada.
 //
@@ -77,7 +82,7 @@ function parseDatos(body) {
 
 /* ---------- Items con precios reales ---------- */
 
-function buildItems(requested, productsById, globalTiers) {
+function buildItems(requested, productsById, globalTiers, cupon) {
   // Los productos "a cotizar" (sin precio) se guardan sin precio y no suman al subtotal:
   // el checkout por transferencia los deja pasar (se coordinan por WhatsApp).
   const priceable = [];
@@ -88,7 +93,7 @@ function buildItems(requested, productsById, globalTiers) {
     return quote;
   });
 
-  const priced = priceOrder(priceable, productsById, globalTiers); // lanza 422 si falta un producto
+  const priced = pref.applyCupon(priceOrder(priceable, productsById, globalTiers), cupon || null); // lanza 422 si falta un producto
   let k = 0;
   const items = requested.map((l, i) => {
     if (isQuote[i]) {
@@ -108,19 +113,30 @@ function buildItems(requested, productsById, globalTiers) {
       };
     }
     const pl = priced.lines[k++];
-    return {
+    const item = {
       producto_id: pl.id,
       nombre: pl.name,
       tamano: pl.size,
       qty: pl.qty,
       color: pl.color,
       nota: l.nota,
-      precio: pl.unit,
+      precio: pl.unitFinal, // lo que se cobra por unidad (con descuento por cantidad y cupón)
       precio_lista: pl.unitBase,
       descuento_cantidad_pct: pl.pct,
     };
+    if (cupon) {
+      item.precio_antes_cupon = pl.unit;
+      item.descuento_cupon_pct = cupon.pct;
+      item.cupon = cupon.code;
+    }
+    return item;
   });
-  return { items, subtotal: priced.subtotal };
+  return { items, subtotal: priced.total, descuento: priced.descuento };
+}
+
+// 12345 -> "12.345" (sin depender de la configuración regional del servidor)
+function miles(n) {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
 /* ---------- Supabase (con la llave de servicio) ---------- */
@@ -253,20 +269,27 @@ exports.handler = async (event) => {
     const requested = parseCart(body.cart);
     requested.forEach((l, i) => { l.nota = clean(body.cart[i].nota, MAX_NOTA_LINEA); });
     const datos = parseDatos(body);
+    const cupon = pref.resolveCupon(body.cupon); // 422 CUPON_INVALIDO si no existe o no está vigente
 
     const ids = Array.from(new Set(requested.map((l) => l.id)));
     const { productsById, globalTiers } = await loadCatalogData(ids);
-    const { items, subtotal } = buildItems(requested, productsById, globalTiers);
+    const { items, subtotal, descuento } = buildItems(requested, productsById, globalTiers, cupon);
     attachCostos(items, await loadCostos(ids, key));
+
+    // Línea de cupón al principio de las notas (solo si de verdad descontó algo).
+    if (cupon && descuento > 0) {
+      const linea = 'Cupón ' + cupon.code + ' (-' + cupon.pct + '%): descuento de $U ' + miles(descuento);
+      datos.notas = datos.notas ? linea + '\n' + datos.notas : linea;
+    }
 
     const row = Object.assign({}, datos, {
       items,
-      subtotal, // lo calculó el servidor; el "subtotal" que mande el cliente se ignora
+      subtotal, // lo calculó el servidor (con cupón incluido); el "subtotal" que mande el cliente se ignora
       estado: 'nuevo',
       canal: 'web',
     });
     const id = await insertPedido(row, key);
-    return reply(200, { ok: true, id, subtotal });
+    return reply(200, { ok: true, id, subtotal, descuento: descuento || 0, cupon: cupon && descuento > 0 ? cupon.code : null });
   } catch (err) {
     if (err instanceof HttpError) {
       return reply(err.status, Object.assign({ error: err.message, code: err.code }, err.detail ? { detail: err.detail } : {}));

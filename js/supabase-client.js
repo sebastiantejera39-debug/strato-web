@@ -159,6 +159,7 @@ async function stratoInsertPedido(pedido) {
     direccion: pedido.direccion || null,
     notas: pedido.notas || null,
     pago: pedido.pago || null,
+    cupon: pedido.cupon || null, // solo el código: el descuento lo calcula el servidor
   };
   // Un solo reintento, y solo si el fallo pudo ser pasajero (sin conexión o error del servidor):
   // un dato inválido (4xx) no se arregla repitiéndolo.
@@ -187,7 +188,7 @@ async function stratoEnviarPedido(body) {
       console.warn("Strato: no se pudo guardar el pedido.", resp.status, code, detail, reason);
       return { ok: false, reason: reason, code: code || "HTTP " + resp.status, detail: detail, retry: resp.status >= 500 && code !== "NOT_CONFIGURED" };
     }
-    return { ok: true, id: data.id || null };
+    return { ok: true, id: data.id || null, subtotal: data.subtotal, descuento: data.descuento || 0 };
   } catch (e) {
     console.warn("Strato: error guardando el pedido.", e);
     return { ok: false, reason: String(e), code: "SIN_CONEXION", detail: "", retry: true };

@@ -144,7 +144,7 @@
             <span id="summaryAhorro">-$U 0</span>
           </div>
           <div class="cart-drawer__row cart-drawer__row--descuento" id="summaryDescuentoRow" style="display:none">
-            <span>Descuento</span>
+            <span id="summaryDescuentoLabel">Descuento</span>
             <span id="summaryDescuento">-$U 0</span>
           </div>
           <div class="cart-drawer__row" id="summaryRecargoRow" style="display:none">
@@ -228,6 +228,20 @@
     updateTotals();
   }
 
+  // "Cupón CYBER15 (-15%)": el rótulo de la fila de descuento y del WhatsApp.
+  function cuponLabel() {
+    const code = stratoGetCuponCode();
+    return code ? "Cupón " + code + " (-" + STRATO_CUPONES[code].valor + "%)" : "Descuento";
+  }
+
+  // El servidor rechazó el cupón (venció, ya no existe…): se saca del carrito, se redibuja el resumen y se avisa.
+  function cuponRechazado(mensaje) {
+    try { localStorage.removeItem(CUPON_KEY); } catch (e) { /* se ignora */ }
+    renderSummary();
+    if (typeof stratoRenderCartDrawer === "function") stratoRenderCartDrawer();
+    alert((mensaje || "Ese cupón ya no es válido.") + " Lo sacamos del pedido: revisá el total y confirmá de nuevo.");
+  }
+
   function updateTotals() {
     const subtotal = stratoCartSubtotal();
     const descuento = stratoCartDescuento();
@@ -250,6 +264,7 @@
     if (descuento > 0) {
       descuentoRow.style.display = "flex";
       document.getElementById("summaryDescuento").textContent = "-$U " + descuento.toLocaleString("es-UY");
+      document.getElementById("summaryDescuentoLabel").textContent = cuponLabel();
     } else {
       descuentoRow.style.display = "none";
     }
@@ -308,20 +323,13 @@
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Pagar con Mercado Pago"; }
     };
 
-    // Los cupones todavía no viajan a Mercado Pago (la función calcula el total sola).
-    if (stratoCartDescuento() > 0) {
-      alert("Por ahora los cupones no se pueden usar con Mercado Pago. Quitá el cupón o elegí Transferencia bancaria.");
-      rehabilitarBoton();
-      return;
-    }
-
     // Lo que el cliente está viendo en pantalla (el mismo cálculo que updateTotals).
     const baseTotal = stratoCartTotal();
     const totalEnPantalla = baseTotal + Math.round(baseTotal * (MP_RECARGO_PCT / 100));
 
-    // Al servidor van SOLO producto, tamaño, color y cantidad. Los precios y el recargo
-    // los calcula la función con los datos reales de Supabase: lo que acá se muestre
-    // no puede cambiar lo que se cobra.
+    // Al servidor van SOLO producto, tamaño, color y cantidad (y el CÓDIGO del cupón, si hay). Los precios,
+    // el descuento y el recargo los calcula la función con los datos reales de Supabase: lo que acá se
+    // muestre no puede cambiar lo que se cobra.
     const cart = lines.map((l) => ({
       id: l.product.id,
       size: l.sizeName || null,
@@ -334,16 +342,22 @@
       const resp = await fetch("/api/create-preference", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cart: cart }),
+        body: JSON.stringify({ cart: cart, cupon: stratoGetCuponCode() }),
       });
       data = await resp.json().catch(() => null);
       if (!resp.ok || !data || !data.init_point) {
         const e = new Error((data && data.error) || "No se pudo generar el link de pago");
         e.userMessage = data && typeof data.error === "string" ? data.error : null;
+        e.apiCode = data && typeof data.code === "string" ? data.code : null;
         throw e;
       }
     } catch (err) {
       console.error("Error al crear preferencia de Mercado Pago:", err);
+      if (err.apiCode === "CUPON_INVALIDO") {
+        cuponRechazado(err.userMessage);
+        rehabilitarBoton();
+        return;
+      }
       alert(err.userMessage || "No pudimos conectar con Mercado Pago. Probá de nuevo en unos segundos, o elegí Transferencia bancaria.");
       rehabilitarBoton();
       return;
@@ -391,7 +405,7 @@
     const ahorroCantidad = stratoCartVolumeDiscount();
     msg += "\nSubtotal: $U " + (subtotal + ahorroCantidad).toLocaleString("es-UY");
     if (ahorroCantidad > 0) msg += "\nDescuento por cantidad: -$U " + ahorroCantidad.toLocaleString("es-UY");
-    if (descuento > 0) msg += "\nDescuento: -$U " + descuento.toLocaleString("es-UY");
+    if (descuento > 0) msg += "\n" + cuponLabel() + ": -$U " + descuento.toLocaleString("es-UY");
     msg += "\nTotal: $U " + total.toLocaleString("es-UY");
     msg += "\n\nNombre: " + datosComunes.cliente_nombre;
     msg += "\nContacto: " + datosComunes.cliente_telefono;
@@ -408,6 +422,13 @@
         pago: "Transferencia bancaria",
         items: pedidoItems(lines),
       }));
+    }
+    // El servidor no aceptó el cupón (venció, por ejemplo): no se abre el WhatsApp con un total que no corresponde.
+    if (guardado && !guardado.ok && guardado.code === "CUPON_INVALIDO") {
+      cuponRechazado(guardado.reason);
+      const btn = document.getElementById("checkoutSubmitBtn");
+      if (btn) { btn.disabled = false; btn.textContent = "Confirmar pedido por WhatsApp"; }
+      return;
     }
     if (!guardado || !guardado.ok) {
       const motivo = guardado ? [guardado.code, guardado.detail].filter(Boolean).join(" · ") : "";
@@ -440,6 +461,7 @@
       direccion: isEnvio ? address : null,
       notas: document.getElementById("fNotes").value || null,
       subtotal: stratoCartSubtotal(),
+      cupon: stratoGetCuponCode(), // solo el código; el servidor verifica y calcula el descuento
     };
 
     if (checkoutMethod === "mp") {

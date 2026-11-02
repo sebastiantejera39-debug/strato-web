@@ -6,6 +6,10 @@
 // js/cart.js (tamaño elegido + descuento por cantidad según el TOTAL de unidades de cada
 // producto). El recargo de Mercado Pago también se decide acá.
 //
+// Cupones de descuento (CUPONES, más abajo): el navegador manda solo el CÓDIGO; acá se verifica que
+// exista y que esté vigente hoy (día de Uruguay) y se calcula el descuento. Si el código no sirve se
+// rechaza el pago (422), así nadie paga sin el descuento que creía tener ni con uno que no corresponde.
+//
 // El Access Token de Mercado Pago vive SOLO acá (variable de entorno MP_ACCESS_TOKEN en
 // Netlify), nunca en el HTML/JS del sitio.
 //
@@ -19,6 +23,15 @@
 const DEFAULT_SUPABASE_URL = 'https://elpckhakeiezcnahxmoz.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_7F0HV4PNBbEmr7fb3ZTYdA_n9AdfzXa';
 const DEFAULT_RECARGO_PCT = 8;
+
+/* ---------- Cupones de descuento ----------
+   TIENE QUE SER IGUAL a STRATO_CUPONES de js/cart.js (el carrito lo usa para mostrar el total; este es el que
+   manda al cobrar y al guardar el pedido). Código en MAYÚSCULAS. `desde` y `hasta` son días de Uruguay
+   (AAAA-MM-DD), ambos incluidos; sin `hasta` no vence. Solo se admiten porcentajes (1 a 90). */
+const CUPONES = {
+  CYBER15: { tipo: 'porcentaje', valor: 15, desde: '2026-11-02', hasta: '2026-11-05' }, // Cyber Monday
+};
+const MAX_CUPON_LEN = 30;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_BODY_CHARS = 20000; // un carrito normal pesa unos pocos cientos de bytes
@@ -194,6 +207,51 @@ function priceOrder(lines, productsById, globalTiers) {
   return { lines: priced, subtotal };
 }
 
+/* ---------- Cupones: validación y cálculo ---------- */
+
+// Día de hoy en Uruguay (UTC-3 todo el año) como AAAA-MM-DD. `now` en milisegundos (para los tests).
+function hoyUY(now) {
+  return new Date((now == null ? Date.now() : now) - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+// Sin código => null. Con código: { code, pct } si existe y está vigente hoy; si no, lanza 422 CUPON_INVALIDO.
+function resolveCupon(raw, now) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') throw new HttpError(422, 'Ese cupón no es válido.', 'CUPON_INVALIDO');
+  const code = raw.trim().toUpperCase();
+  if (!code) return null;
+  if (code.length > MAX_CUPON_LEN || !Object.prototype.hasOwnProperty.call(CUPONES, code)) {
+    throw new HttpError(422, 'Ese cupón no es válido.', 'CUPON_INVALIDO');
+  }
+  const c = CUPONES[code];
+  if (!c || c.tipo !== 'porcentaje' || !(c.valor > 0 && c.valor <= 90)) {
+    console.error('create-preference: cupón mal configurado:', code);
+    throw new HttpError(422, 'Ese cupón no es válido.', 'CUPON_INVALIDO');
+  }
+  const hoy = hoyUY(now);
+  if (c.desde && hoy < c.desde) throw new HttpError(422, 'Ese cupón todavía no está vigente.', 'CUPON_INVALIDO');
+  if (c.hasta && hoy > c.hasta) throw new HttpError(422, 'Ese cupón ya venció.', 'CUPON_INVALIDO');
+  return { code, pct: c.valor };
+}
+
+// Precio de UNA unidad con el cupón: sobre el precio que ya tiene el descuento por cantidad, redondeado al
+// peso (mismo número que se muestra, que se cobra y que se guarda). Misma fórmula que js/cart.js.
+function cuponUnit(unit, pct) {
+  return Math.max(1, Math.round((unit * (100 - pct)) / 100));
+}
+
+// Le aplica el cupón (o nada) a un pedido ya calculado con priceOrder. Devuelve las líneas con
+// unitFinal/lineFinal, `subtotal` (con el descuento por cantidad, SIN cupón), `descuento` (lo que ahorra el
+// cupón) y `total` (lo que se paga, sin el recargo de Mercado Pago).
+function applyCupon(order, cupon) {
+  const lines = order.lines.map((l) => {
+    const unitFinal = cupon ? cuponUnit(l.unit, cupon.pct) : l.unit;
+    return Object.assign({}, l, { unitFinal, lineFinal: unitFinal * l.qty });
+  });
+  const total = lines.reduce((sum, l) => sum + l.lineFinal, 0);
+  return { lines, subtotal: order.subtotal, descuento: order.subtotal - total, total, cupon: cupon || null };
+}
+
 /* ---------- Supabase (lectura pública) ---------- */
 
 async function fetchWithTimeout(url, options, ms) {
@@ -276,21 +334,24 @@ exports.handler = async (event) => {
   try {
     const body = parseBody(event);
     const requested = parseCart(body.cart); // el body.recargoPct y cualquier "precio" del cliente se ignoran
+    const cupon = resolveCupon(body.cupon); // solo el código: el descuento lo calcula el servidor (422 si no sirve)
 
     const ids = Array.from(new Set(requested.map((l) => l.id)));
     const { productsById, globalTiers } = await loadCatalogData(ids);
-    const order = priceOrder(requested, productsById, globalTiers);
+    const priced = priceOrder(requested, productsById, globalTiers);
+    const order = applyCupon(priced, cupon);
 
     // El recargo de Mercado Pago va como un ítem aparte (en vez de inflar cada precio
-    // unitario) para que quede claro y transparente en el resumen de MP.
+    // unitario) para que quede claro y transparente en el resumen de MP. Se calcula sobre lo que
+    // realmente se paga (con el cupón ya descontado).
     const pct = recargoPct();
-    const recargo = Math.round(order.subtotal * (pct / 100)); // misma fórmula que checkout.html
-    const total = order.subtotal + recargo;
+    const recargo = Math.round(order.total * (pct / 100)); // misma fórmula que checkout.html
+    const total = order.total + recargo;
 
     const items = order.lines.map((l) => ({
-      title: itemTitle(l),
+      title: (itemTitle(l) + (cupon ? ' · ' + cupon.code + ' -' + cupon.pct + '%' : '')).slice(0, 200),
       quantity: l.qty,
-      unit_price: l.unit,
+      unit_price: l.unitFinal,
       currency_id: 'UYU',
     }));
     if (recargo > 0) {
@@ -335,7 +396,9 @@ exports.handler = async (event) => {
       init_point: data.init_point,
       id: data.id,
       // Lo que realmente se va a cobrar: el checkout lo compara con lo que mostró en pantalla.
-      subtotal: order.subtotal,
+      subtotal: order.subtotal, // con el descuento por cantidad, sin cupón
+      descuento: order.descuento, // lo que ahorra el cupón
+      cupon: cupon ? cupon.code : null,
       recargo,
       recargoPct: pct,
       total,
@@ -355,5 +418,6 @@ exports.handler = async (event) => {
 exports._internals = {
   parseCart, priceOrder, mapProduct, normalizeTiers, tierFor, findSize, basePrice, recargoPct,
   loadCatalogData, fetchWithTimeout, cleanText, parseBody, reply, HttpError,
+  CUPONES, hoyUY, resolveCupon, cuponUnit, applyCupon,
   DEFAULT_SUPABASE_URL, FETCH_TIMEOUT_MS,
 };
