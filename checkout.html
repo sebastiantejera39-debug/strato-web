@@ -117,7 +117,7 @@
             </div>
             <div class="payment-method__info" id="infoMp">
               <p>Pagás con tarjeta Visa, Mastercard, OCA, Cabal, Diners o Líder.</p>
-              <p class="payment-method__warning">Suma un 8% más, que se agrega al total al generar el enlace de pago en Mercado Pago.</p>
+              <p class="payment-method__warning" id="mpRecargoAviso">Suma un 11,6% más, que se agrega al total al generar el enlace de pago en Mercado Pago.</p>
             </div>
             <div class="payment-method__info" id="infoTransferencia" style="display:none">
               <p>Transferencia a cuenta de Mercado Pago. Te pasamos los datos para transferir por WhatsApp al confirmar el pedido.</p>
@@ -148,7 +148,7 @@
             <span id="summaryDescuento">-$U 0</span>
           </div>
           <div class="cart-drawer__row" id="summaryRecargoRow" style="display:none">
-            <span>Recargo Mercado Pago (8%)</span>
+            <span id="summaryRecargoLabel">Recargo Mercado Pago (11,6%)</span>
             <span id="summaryRecargo">$U 0</span>
           </div>
           <div class="cart-drawer__row total">
@@ -188,8 +188,18 @@
 <script src="js/main.js"></script>
 <script>
   // Solo para MOSTRAR el recargo en pantalla. Lo que se cobra lo decide la función
-  // netlify/functions/create-preference.js (variable MP_RECARGO_PCT, por defecto 8): deben coincidir.
-  const MP_RECARGO_PCT = 8;
+  // netlify/functions/create-preference.js (variable MP_RECARGO_PCT, por defecto 11,6): deben coincidir. La cuenta es total × pct / 100, igual en las dos.
+  // Si hay una variable MP_RECARGO_PCT cargada en Netlify, tiene que valer lo mismo que esto (o no existir).
+  let MP_RECARGO_PCT = 11.6; // "let": si el servidor responde con otro porcentaje, se adopta el del servidor (ver pagarConMercadoPago)
+  // Los textos que nombran el porcentaje salen de la constante, así no pueden quedar desparejos.
+  function pintarTextosRecargo() {
+    const txt = String(MP_RECARGO_PCT).replace(".", ",") + "%";
+    const aviso = document.getElementById("mpRecargoAviso");
+    if (aviso) aviso.textContent = "Suma un " + txt + " más, que se agrega al total al generar el enlace de pago en Mercado Pago.";
+    const rot = document.getElementById("summaryRecargoLabel");
+    if (rot) rot.textContent = "Recargo Mercado Pago (" + txt + ")";
+  }
+  pintarTextosRecargo();
   let checkoutMethod = "mp";
 
   function escHtml(str) {
@@ -246,7 +256,7 @@
     const subtotal = stratoCartSubtotal();
     const descuento = stratoCartDescuento();
     const baseTotal = stratoCartTotal();
-    const recargo = checkoutMethod === "mp" ? Math.round(baseTotal * (MP_RECARGO_PCT / 100)) : 0;
+    const recargo = checkoutMethod === "mp" ? Math.round(baseTotal * MP_RECARGO_PCT / 100) : 0;
     const finalTotal = baseTotal + recargo;
 
     // "Subtotal" va a precio de lista; el ahorro por cantidad se muestra aparte.
@@ -325,7 +335,7 @@
 
     // Lo que el cliente está viendo en pantalla (el mismo cálculo que updateTotals).
     const baseTotal = stratoCartTotal();
-    const totalEnPantalla = baseTotal + Math.round(baseTotal * (MP_RECARGO_PCT / 100));
+    const totalEnPantalla = baseTotal + Math.round(baseTotal * MP_RECARGO_PCT / 100);
 
     // Al servidor van SOLO producto, tamaño, color y cantidad (y el CÓDIGO del cupón, si hay). Los precios,
     // el descuento y el recargo los calcula la función con los datos reales de Supabase: lo que acá se
@@ -367,6 +377,13 @@
     // precio o un descuento mientras tanto), no lo mandamos a pagar un monto distinto al
     // que vio: actualizamos el resumen y que confirme de nuevo.
     if (Number(data.total) !== totalEnPantalla) {
+      // Si la diferencia es el recargo (el servidor manda su porcentaje), se adopta el del servidor: lo que se
+      // cobra manda, y así el resumen muestra el monto real y el cliente puede confirmar de nuevo.
+      const pctServidor = Number(data.recargoPct);
+      if (Number.isFinite(pctServidor) && pctServidor >= 0 && pctServidor !== MP_RECARGO_PCT) {
+        MP_RECARGO_PCT = pctServidor;
+        pintarTextosRecargo();
+      }
       try { if (typeof stratoLoadLiveCatalog === "function") await stratoLoadLiveCatalog(); } catch (e) { /* se ignora */ }
       renderSummary();
       alert("Los precios se actualizaron mientras armabas el pedido. Revisá el resumen (el total ahora es $U " +

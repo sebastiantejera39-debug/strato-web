@@ -15,14 +15,14 @@
 //
 // Variables de entorno (todas opcionales salvo MP_ACCESS_TOKEN):
 //   SUPABASE_URL, SUPABASE_ANON_KEY  -> si no están, se usan los valores públicos de js/supabase-client.js
-//   MP_RECARGO_PCT                   -> recargo de Mercado Pago en % (por defecto 8; debe coincidir con el checkout)
+//   MP_RECARGO_PCT                   -> recargo de Mercado Pago en % (por defecto 11,6; debe coincidir con el checkout)
 //   MP_SUCCESS_URL / MP_FAILURE_URL / MP_PENDING_URL, URL
 
 'use strict';
 
 const DEFAULT_SUPABASE_URL = 'https://elpckhakeiezcnahxmoz.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_7F0HV4PNBbEmr7fb3ZTYdA_n9AdfzXa';
-const DEFAULT_RECARGO_PCT = 8;
+const DEFAULT_RECARGO_PCT = 11.6; // cubre la comisión de MP: 5,99% al instante + 2,49% por 12 cuotas sin interés, más IVA (≈ 10,35%), para recibir el 100% del precio
 
 /* ---------- Cupones de descuento ----------
    TIENE QUE SER IGUAL a STRATO_CUPONES de js/cart.js (el carrito lo usa para mostrar el total; este es el que
@@ -345,7 +345,8 @@ exports.handler = async (event) => {
     // unitario) para que quede claro y transparente en el resumen de MP. Se calcula sobre lo que
     // realmente se paga (con el cupón ya descontado).
     const pct = recargoPct();
-    const recargo = Math.round(order.total * (pct / 100)); // misma fórmula que checkout.html
+    // total × pct / 100 (y no total × (pct / 100)): con 11,6 la segunda se redondea mal en los ".5" exactos por el punto flotante. Misma fórmula que checkout.html.
+    const recargo = Math.round(order.total * pct / 100);
     const total = order.total + recargo;
 
     const items = order.lines.map((l) => ({
@@ -356,7 +357,7 @@ exports.handler = async (event) => {
     }));
     if (recargo > 0) {
       items.push({
-        title: `Recargo Mercado Pago (${pct}%)`,
+        title: `Recargo Mercado Pago (${String(pct).replace('.', ',')}%)`,
         quantity: 1,
         unit_price: recargo,
         currency_id: 'UYU',
