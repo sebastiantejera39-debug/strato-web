@@ -6,7 +6,7 @@
    ========================================================================== */
 
 /* ---- Configuración: reemplazar con los datos reales del negocio ---- */
-const STRATO_WHATSAPP_NUMBER = "59898037399"; // formato 598XXXXXXXX, sin +
+const STRATO_WHATSAPP_NUMBER = "59898027073"; // formato 598XXXXXXXX, sin +
 const STRATO_INSTAGRAM = "storge.lab"; // TODO: usuario real de Instagram (ya confirmado: @storge.lab)
 
 const CART_KEY = "strato_cart_v1";

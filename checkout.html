@@ -8,6 +8,23 @@
 <link rel="icon" type="image/png" href="images/favicon.png">
 <link rel="apple-touch-icon" href="images/favicon-180.png">
 <link rel="stylesheet" href="css/style.css">
+<style>
+  /* Panel de Transferencia: datos de la cuenta + monto. Solo vive en el checkout. */
+  .transfer-data { margin: 0.7rem 0 0.9rem; background: var(--color-bg); border: 1px solid var(--color-line); }
+  .transfer-data__row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 0.9rem; padding: 0.7rem 0.9rem; border-top: 1px solid var(--color-line); }
+  .transfer-data__row:first-child { border-top: 0; }
+  .transfer-data dt { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-stone); }
+  .transfer-data dd { margin: 0; display: flex; align-items: center; gap: 0.7rem; color: var(--color-ink); font-size: 1rem; font-weight: 600; }
+  .transfer-data__num { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+  .transfer-copy { min-height: 32px; padding: 0.3rem 0.85rem; border: 1px solid var(--color-charcoal); border-radius: var(--radius); background: transparent; color: var(--color-charcoal); font: inherit; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; transition: background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-press) var(--ease-out); }
+  .transfer-copy:active { transform: scale(0.97); }
+  .transfer-copy:focus-visible { outline: 2px solid var(--color-charcoal); outline-offset: 2px; }
+  @media (hover: hover) and (pointer: fine) { .transfer-copy:hover { background: var(--color-charcoal); color: var(--color-paper); } }
+  @media (max-width: 720px), (pointer: coarse) { .transfer-copy { min-height: 44px; min-width: 44px; } }
+  .transfer-steps { margin: 0 0 0.6rem 1.15rem; padding: 0; }
+  .transfer-steps li { margin: 0 0 0.25rem; }
+  #infoTransferencia { position: relative; }
+</style>
 </head>
 <body>
 
@@ -120,7 +137,32 @@
               <p class="payment-method__warning" id="mpRecargoAviso">Suma un 11,6% más, que se agrega al total al generar el enlace de pago en Mercado Pago.</p>
             </div>
             <div class="payment-method__info" id="infoTransferencia" style="display:none">
-              <p>Transferencia a cuenta de Mercado Pago. Te pasamos los datos para transferir por WhatsApp al confirmar el pedido.</p>
+              <p>Transferí desde tu banco o billetera a esta cuenta de Mercado Pago y mandanos el comprobante por WhatsApp.</p>
+              <dl class="transfer-data">
+                <div class="transfer-data__row">
+                  <dt>Titular</dt>
+                  <dd id="transferTitular"></dd>
+                </div>
+                <div class="transfer-data__row">
+                  <dt id="transferCuentaLabel">Cuenta</dt>
+                  <dd><span id="transferCuenta" class="transfer-data__num"></span><button type="button" class="transfer-copy" data-copy="cuenta" aria-label="Copiar el número de cuenta">Copiar</button></dd>
+                </div>
+                <div class="transfer-data__row">
+                  <dt id="transferMontoLabel">Monto a transferir</dt>
+                  <dd><strong id="transferMonto" class="transfer-data__num"></strong><button type="button" class="transfer-copy" data-copy="monto" id="transferCopiarMonto" aria-label="Copiar el monto a transferir">Copiar</button></dd>
+                </div>
+              </dl>
+              <ol class="transfer-steps" id="transferPasosListo">
+                <li>Transferí el monto exacto a esa cuenta.</li>
+                <li>Tocá <strong>Confirmar pedido por WhatsApp</strong> y adjuntá el comprobante en el chat.</li>
+              </ol>
+              <ol class="transfer-steps" id="transferPasosConfirmar" style="display:none">
+                <li>Tocá <strong>Confirmar pedido por WhatsApp</strong>.</li>
+                <li>Te confirmamos el total final por ahí.</li>
+                <li>Transferí y mandanos el comprobante en el mismo chat.</li>
+              </ol>
+              <p class="payment-method__warning" id="transferNota" style="display:none"></p>
+              <span id="transferCopiado" role="status" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap"></span>
             </div>
           </div>
 
@@ -201,6 +243,70 @@
   }
   pintarTextosRecargo();
   let checkoutMethod = "mp";
+
+  // Datos para pagar por transferencia: los ve cualquiera que elija "Transferencia bancaria". Es el único lugar
+  // donde están escritos: el panel, el recordatorio de gracias.html (vía sessionStorage) y el WhatsApp salen de acá.
+  const CUENTA_TRANSFERENCIA = { titular: "Sebastian Tejera", entidad: "Mercado Pago", cuenta: "1008657986565" };
+
+  // ¿El monto de pantalla es el definitivo? No lo es si el pedido incluye envío a domicilio o productos a cotizar:
+  // eso se confirma por WhatsApp antes de transferir.
+  function totalPorConfirmar() {
+    const hayCotizar = stratoCartDetailed().some((l) => l.lineTotal == null);
+    const esEnvio = document.getElementById("fDelivery").value === "Envío";
+    return { hayCotizar: hayCotizar, esEnvio: esEnvio, confirmar: hayCotizar || esEnvio };
+  }
+
+  function pintarPanelTransferencia() {
+    document.getElementById("transferTitular").textContent = CUENTA_TRANSFERENCIA.titular;
+    document.getElementById("transferCuentaLabel").textContent = "Cuenta " + CUENTA_TRANSFERENCIA.entidad;
+    document.getElementById("transferCuenta").textContent = CUENTA_TRANSFERENCIA.cuenta;
+    const t = totalPorConfirmar();
+    document.getElementById("transferMonto").textContent = "$U " + stratoCartTotal().toLocaleString("es-UY");
+    document.getElementById("transferMontoLabel").textContent = t.confirmar ? "Total de los productos" : "Monto a transferir";
+    document.getElementById("transferCopiarMonto").style.display = t.confirmar ? "none" : "";
+    document.getElementById("transferPasosListo").style.display = t.confirmar ? "none" : "";
+    document.getElementById("transferPasosConfirmar").style.display = t.confirmar ? "" : "none";
+    const nota = document.getElementById("transferNota");
+    if (t.confirmar) {
+      nota.style.display = "";
+      nota.textContent = (t.hayCotizar ? "Tu pedido tiene productos a cotizar" : "Elegiste envío a domicilio") +
+        ": el total final se confirma por WhatsApp. No transfieras hasta que te lo confirmemos.";
+    } else {
+      nota.style.display = "none";
+    }
+  }
+
+  function copiarTexto(texto) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(texto);
+    return new Promise((ok, mal) => {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = texto; ta.setAttribute("readonly", "");
+        ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+        document.body.appendChild(ta); ta.select();
+        const hecho = document.execCommand("copy");
+        document.body.removeChild(ta);
+        hecho ? ok() : mal(new Error("copy"));
+      } catch (e) { mal(e); }
+    });
+  }
+
+  document.querySelectorAll(".transfer-copy").forEach((btn) => {
+    const original = btn.textContent;
+    btn.addEventListener("click", async () => {
+      const esMonto = btn.dataset.copy === "monto";
+      const aviso = document.getElementById("transferCopiado");
+      try {
+        await copiarTexto(esMonto ? String(stratoCartTotal()) : CUENTA_TRANSFERENCIA.cuenta);
+        btn.textContent = "Copiado";
+        aviso.textContent = esMonto ? "Monto copiado" : "Número de cuenta copiado";
+      } catch (e) {
+        btn.textContent = "No se pudo";
+        aviso.textContent = "No se pudo copiar, copialo a mano";
+      }
+      setTimeout(() => { btn.textContent = original; aviso.textContent = ""; }, 1800);
+    });
+  });
 
   function escHtml(str) {
     return String(str || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -288,6 +394,7 @@
     }
 
     document.getElementById("summaryTotal").textContent = "$U " + finalTotal.toLocaleString("es-UY");
+    pintarPanelTransferencia();
   }
 
   function setCheckoutMethod(method) {
@@ -308,6 +415,7 @@
     const isEnvio = e.target.value === "Envío";
     document.getElementById("addressField").style.display = isEnvio ? "block" : "none";
     document.getElementById("deptoField").style.display = isEnvio ? "block" : "none";
+    pintarPanelTransferencia();
   });
 
   // Items tal como se guardan en la tabla pedidos (jsonb). "precio" es el
@@ -430,6 +538,10 @@
     if (datosComunes.direccion) msg += "\nDirección: " + datosComunes.direccion;
     msg += "\nPago: Transferencia Bancaria (Cuenta Mercado Pago)";
     if (datosComunes.notas) msg += "\nNotas: " + datosComunes.notas;
+    const porConfirmar = totalPorConfirmar().confirmar;
+    msg += porConfirmar
+      ? "\n\nEspero que me confirmen el total final (envío o cotización) para transferir."
+      : "\n\nTe mando el comprobante de la transferencia por acá.";
 
     // El pedido se guarda para que aparezca en el panel. Si no se pudo (ni con el reintento), el
     // WhatsApp igual sale —el cliente no pierde nada—, pero con una marca para que se cargue a mano.
@@ -452,6 +564,13 @@
       msg += "\n\n[Pedido sin registrar en el sistema" + (motivo ? ": " + motivo.slice(0, 80) : "") + "]";
     }
 
+    // gracias.html muestra de nuevo los datos para transferir (el carrito ya no estará).
+    try {
+      sessionStorage.setItem("strato_transfer_v1", JSON.stringify({
+        titular: CUENTA_TRANSFERENCIA.titular, entidad: CUENTA_TRANSFERENCIA.entidad, cuenta: CUENTA_TRANSFERENCIA.cuenta,
+        monto: total, confirmarTotal: porConfirmar,
+      }));
+    } catch (e) { /* se ignora */ }
     window.open(stratoWhatsAppLink(msg), "_blank");
     stratoClearCart();
     window.location.href = "gracias.html";

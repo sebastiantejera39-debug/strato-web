@@ -8,6 +8,22 @@
 <link rel="icon" type="image/png" href="images/favicon.png">
 <link rel="apple-touch-icon" href="images/favicon-180.png">
 <link rel="stylesheet" href="css/style.css">
+<style>
+  /* Recordatorio de los datos para transferir (lo guarda el checkout en sessionStorage). */
+  .transfer-recap { position: relative; margin: 1.6rem auto 0; padding: 1rem 1.1rem; max-width: 460px; text-align: left; background: var(--color-accent-tint); border-radius: var(--radius); font-size: 0.86rem; color: var(--color-stone); }
+  .transfer-recap p { margin: 0 0 0.6rem; }
+  .transfer-data { margin: 0.5rem 0 0; background: var(--color-bg); border: 1px solid var(--color-line); }
+  .transfer-data__row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 0.9rem; padding: 0.7rem 0.9rem; border-top: 1px solid var(--color-line); }
+  .transfer-data__row:first-child { border-top: 0; }
+  .transfer-data dt { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-stone); }
+  .transfer-data dd { margin: 0; display: flex; align-items: center; gap: 0.7rem; color: var(--color-ink); font-size: 1rem; font-weight: 600; }
+  .transfer-data__num { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+  .transfer-copy { min-height: 32px; padding: 0.3rem 0.85rem; border: 1px solid var(--color-charcoal); border-radius: var(--radius); background: transparent; color: var(--color-charcoal); font: inherit; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; transition: background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-press) var(--ease-out); }
+  .transfer-copy:active { transform: scale(0.97); }
+  .transfer-copy:focus-visible { outline: 2px solid var(--color-charcoal); outline-offset: 2px; }
+  @media (hover: hover) and (pointer: fine) { .transfer-copy:hover { background: var(--color-charcoal); color: var(--color-paper); } }
+  @media (max-width: 720px), (pointer: coarse) { .transfer-copy { min-height: 44px; min-width: 44px; } }
+</style>
 </head>
 <body>
 
@@ -42,7 +58,16 @@
       <span class="layers-mark" style="color:var(--color-accent);justify-content:center;align-items:center;margin:0 auto 1.5rem;"><span></span><span></span><span></span></span>
       <span class="eyebrow" style="justify-content:center" id="graciasEyebrow">Pedido enviado</span>
       <h1 id="graciasTitulo">¡Gracias!</h1>
-      <p id="graciasTexto">Tu pedido se envió por WhatsApp. En breve te confirmamos disponibilidad, tiempo de impresión y coordinamos la entrega o el envío.</p>
+      <p id="graciasTexto">Tu pedido se envió por WhatsApp. Mandanos ahí el comprobante de la transferencia. En breve te confirmamos disponibilidad, tiempo de impresión y coordinamos la entrega o el envío.</p>
+      <div class="transfer-recap" id="graciasTransfer" style="display:none">
+        <p id="graciasTransferIntro"></p>
+        <dl class="transfer-data">
+          <div class="transfer-data__row"><dt>Titular</dt><dd id="gtTitular"></dd></div>
+          <div class="transfer-data__row"><dt id="gtCuentaLabel">Cuenta</dt><dd><span id="gtCuenta" class="transfer-data__num"></span><button type="button" class="transfer-copy" id="gtCopiarCuenta" aria-label="Copiar el número de cuenta">Copiar</button></dd></div>
+          <div class="transfer-data__row" id="gtMontoRow"><dt>Monto a transferir</dt><dd><strong id="gtMonto" class="transfer-data__num"></strong><button type="button" class="transfer-copy" id="gtCopiarMonto" aria-label="Copiar el monto a transferir">Copiar</button></dd></div>
+        </dl>
+        <span id="gtCopiado" role="status" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap"></span>
+      </div>
       <div class="hero__actions" style="justify-content:center" id="graciasAcciones">
         <a href="catalogo.html" class="btn btn-ghost">Seguir viendo el catálogo</a>
         <a href="index.html" class="btn btn-primary">Volver al inicio</a>
@@ -78,9 +103,48 @@
   // Si venimos de vuelta de Mercado Pago, la URL trae ?estado=success|failure|pending.
   // Si no hay ?estado (pedido confirmado por WhatsApp/transferencia), dejamos el
   // mensaje por defecto de arriba — ese flujo ya limpió el carrito él mismo.
+  // Si el cliente confirmó un pedido por transferencia, el checkout dejó los datos en sessionStorage: se los
+  // mostramos de nuevo (el carrito ya no está) por si confirmó antes de transferir.
+  function mostrarDatosTransferencia() {
+    let d = null;
+    try { d = JSON.parse(sessionStorage.getItem("strato_transfer_v1") || "null"); } catch (e) { /* se ignora */ }
+    if (!d || typeof d.cuenta !== "string" || typeof d.titular !== "string") return;
+    const $ = (id) => document.getElementById(id);
+    $("gtTitular").textContent = d.titular;
+    $("gtCuentaLabel").textContent = "Cuenta " + String(d.entidad || "");
+    $("gtCuenta").textContent = d.cuenta;
+    const monto = Number(d.monto);
+    const conMonto = !d.confirmarTotal && Number.isFinite(monto) && monto > 0;
+    $("gtMontoRow").style.display = conMonto ? "" : "none";
+    if (conMonto) $("gtMonto").textContent = "$U " + monto.toLocaleString("es-UY");
+    $("graciasTransferIntro").textContent = d.confirmarTotal
+      ? "Cuando te confirmemos el total final por WhatsApp, transferí a esta cuenta y mandanos el comprobante en el mismo chat."
+      : "Si todavía no transferiste, estos son los datos. Mandanos el comprobante en el mismo chat de WhatsApp.";
+    $("graciasTransfer").style.display = "";
+    const copiar = (texto) => (navigator.clipboard && window.isSecureContext)
+      ? navigator.clipboard.writeText(texto)
+      : new Promise((ok, mal) => {
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = texto; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+            document.body.appendChild(ta); ta.select();
+            const hecho = document.execCommand("copy"); document.body.removeChild(ta);
+            hecho ? ok() : mal(new Error("copy"));
+          } catch (e) { mal(e); }
+        });
+    [["gtCopiarCuenta", d.cuenta, "Número de cuenta copiado"], ["gtCopiarMonto", String(monto), "Monto copiado"]].forEach((x) => {
+      const btn = $(x[0]); const original = btn.textContent;
+      btn.addEventListener("click", async () => {
+        try { await copiar(x[1]); btn.textContent = "Copiado"; $("gtCopiado").textContent = x[2]; }
+        catch (e) { btn.textContent = "No se pudo"; $("gtCopiado").textContent = "No se pudo copiar, copialo a mano"; }
+        setTimeout(() => { btn.textContent = original; $("gtCopiado").textContent = ""; }, 1800);
+      });
+    });
+  }
+
   (function () {
     const estado = new URLSearchParams(window.location.search).get("estado");
-    if (!estado) return;
+    if (!estado) { mostrarDatosTransferencia(); return; }
 
     const eyebrow = document.getElementById("graciasEyebrow");
     const titulo = document.getElementById("graciasTitulo");
